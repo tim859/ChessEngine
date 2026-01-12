@@ -17,11 +17,18 @@ BoardView::BoardView() {
     }
 }
 
-void BoardView::drawBoard(sf::RenderWindow& window, const std::vector<HighlightedSquare>& highlightedSquares) const {
+void BoardView::drawBoard(sf::RenderWindow& window) const {
     for (int row = 0; row < 8; ++row) {
         for (int column = 0; column < 8; ++column) {
             sf::RectangleShape square({squareSize, squareSize});
             square.setPosition({column * squareSize, row * squareSize});
+
+            // combine the different highlighted squares together into one vector
+            std::vector<HighlightedSquare> highlightedSquares;
+            if (currentMoveHighlightedSquare)
+                highlightedSquares.emplace_back(currentMoveHighlightedSquare.value());
+            highlightedSquares.insert(highlightedSquares.end(), previousMoveHighlightedSquares.begin(), previousMoveHighlightedSquares.end());
+            highlightedSquares.insert(highlightedSquares.end(), validMoveHighlightedSquares.begin(), validMoveHighlightedSquares.end());
 
             // check to see if the square should be highlighted a different colour
             bool isHighlightedSquare = false;
@@ -92,9 +99,39 @@ void BoardView::drawPawnPromotionPieces(sf::RenderWindow &window, const Piece::C
     }
 }
 
-sf::Vector2f BoardView::getSquare(const int mouseX, const int mouseY) const {
+void BoardView::pickupPieceFromBoard(const sf::Vector2<int> startSquare, const std::vector<sf::Vector2<int>>& validMovableSquares) {
+    currentMoveHighlightedSquare = HighlightedSquare(startSquare, HighlightedSquare::HighlightType::STARTMOVE);
+    // add the valid movable squares to the list of valid move highlighted squares
+    // to avoid solid blocks of colour on the board, sequential valid moves in the horizontal or vertical directions are broken up into two alternating colours
+    for (const auto& square : validMovableSquares) {
+        // check whether the square is horizontally or vertically aligned with the start square
+        if (square.x == startSquare.x || square.y == startSquare.y) {
+            // use manhattan distance from the start square to determine if the square is alternating or not
+            if (const auto distanceFromStart = std::abs(square.x - startSquare.x) + std::abs(square.y - startSquare.y); distanceFromStart % 2 == 1) {
+                validMoveHighlightedSquares.emplace_back(square, HighlightedSquare::HighlightType::VALIDMOVEALT);
+                continue;
+            }
+        }
+        // square is not horizontally or vertically aligned and/or is not alternating
+        validMoveHighlightedSquares.emplace_back(square, HighlightedSquare::HighlightType::VALIDMOVE);
+    }
+}
+
+void BoardView::placePieceOnBoard(const bool pieceMoved, sf::Vector2<int> endSquare) {
+    validMoveHighlightedSquares.clear();
+    if (pieceMoved) {
+        // stop highlighting the last moves squares
+        previousMoveHighlightedSquares.clear();
+        // highlight this moves squares
+        previousMoveHighlightedSquares.emplace_back(currentMoveHighlightedSquare.value());
+        previousMoveHighlightedSquares.emplace_back(endSquare, HighlightedSquare::HighlightType::STOPMOVE);
+    }
+    currentMoveHighlightedSquare = std::nullopt;
+}
+
+sf::Vector2<int> BoardView::getSquare(const int mouseX, const int mouseY) const {
     // calculation that computes the square of the board that the mouse cursor is over
-    return {floor(mouseX / squareSize), floor(mouseY / squareSize)};
+    return {static_cast<int>(floor(mouseX / squareSize)), static_cast<int>(floor(mouseY / squareSize))};
 }
 
 const sf::Texture& BoardView::GetPieceTexture(const Piece piece) const {

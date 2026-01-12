@@ -90,17 +90,18 @@ int main()
                         const auto pawnPendingPromotionSquare = game.getCurrentPawnPendingPromotionSquare().value();
                         const float direction = game.getCurrentPawnPendingPromotionColour() == Piece::Colour::WHITE ? 1 : -1;
                         // get the selected promotion piece and send it to game
-                        if (boardView.getSquare(mousePosition.x, mousePosition.y) == static_cast<sf::Vector2f>(pawnPendingPromotionSquare))
+                        if (boardView.getSquare(mousePosition.x, mousePosition.y) == pawnPendingPromotionSquare)
                             game.promotePawn(game.getCurrentGameState(), Piece::Type::QUEEN);
-                        if (boardView.getSquare(mousePosition.x, mousePosition.y) == sf::Vector2f(pawnPendingPromotionSquare.x, pawnPendingPromotionSquare.y + direction))
+                        if (boardView.getSquare(mousePosition.x, mousePosition.y) == sf::Vector2<int>(pawnPendingPromotionSquare.x, pawnPendingPromotionSquare.y + direction))
                             game.promotePawn(game.getCurrentGameState(), Piece::Type::ROOK);
-                        if (boardView.getSquare(mousePosition.x, mousePosition.y) == sf::Vector2f(pawnPendingPromotionSquare.x, pawnPendingPromotionSquare.y + (direction * 2)))
+                        if (boardView.getSquare(mousePosition.x, mousePosition.y) == sf::Vector2<int>(pawnPendingPromotionSquare.x, pawnPendingPromotionSquare.y + (direction * 2)))
                             game.promotePawn(game.getCurrentGameState(), Piece::Type::KNIGHT);
-                        if (boardView.getSquare(mousePosition.x, mousePosition.y) == sf::Vector2f(pawnPendingPromotionSquare.x, pawnPendingPromotionSquare.y + (direction * 3)))
+                        if (boardView.getSquare(mousePosition.x, mousePosition.y) == sf::Vector2<int>(pawnPendingPromotionSquare.x, pawnPendingPromotionSquare.y + (direction * 3)))
                             game.promotePawn(game.getCurrentGameState(), Piece::Type::BISHOP);
                         break;
                     }
-                    game.pickupPieceFromBoard(static_cast<sf::Vector2<int>>(boardView.getSquare(mouseButtonPressed->position.x, mouseButtonPressed->position.y)));
+                    if (const sf::Vector2<int> startSquare = boardView.getSquare(mouseButtonPressed->position.x, mouseButtonPressed->position.y); game.pickupPieceFromBoard(startSquare))
+                        boardView.pickupPieceFromBoard(startSquare, game.getValidMovableSquares(game.getCurrentGameState(), startSquare));
                 }
             }
 
@@ -111,7 +112,8 @@ int main()
                 if (mouseButtonReleased->button == sf::Mouse::Button::Left)
                 {
                     mousePosition = {mouseButtonReleased->position.x, mouseButtonReleased->position.y};
-                    const auto moveType = game.placePieceOnBoard(static_cast<sf::Vector2<int>>(boardView.getSquare(mouseButtonReleased->position.x, mouseButtonReleased->position.y)));
+                    const auto moveType = game.placePieceOnBoard(boardView.getSquare(mouseButtonReleased->position.x, mouseButtonReleased->position.y));
+                    boardView.placePieceOnBoard(moveType != Game::MoveType::NONE, boardView.getSquare(mouseButtonReleased->position.x, mouseButtonReleased->position.y));
                     // play corresponding audio file of the move
                     switch (moveType) {
                         case Game::MoveType::MOVESELF:
@@ -143,7 +145,7 @@ int main()
 
         // -------------------------- always drawn -----------------------
 
-        boardView.drawBoard(window, game.getHighlightedSquares());
+        boardView.drawBoard(window);
         boardView.drawPieces(window, game.getCurrentBoardPosition(), game.getSelectedPieceStartSquare());
 
         // ------------------------- conditionally drawn

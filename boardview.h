@@ -3,7 +3,7 @@
 #include <SFML/Graphics.hpp>
 
 #include "game.h"
-#include "game.h"
+#include <vector>
 
 class BoardView {
     const float squareSize = 150.0f;
@@ -18,13 +18,28 @@ class BoardView {
     std::array<std::array<sf::Texture, 6>, 2> pieceTextures;
     std::array<Piece::Type, 4> pawnPromotionPieces = {Piece::Type::QUEEN, Piece::Type::ROOK, Piece::Type::KNIGHT, Piece::Type::BISHOP};
 
+    struct HighlightedSquare {
+        enum class HighlightType {STARTMOVE, STOPMOVE, VALIDMOVE, VALIDMOVEALT};
+
+        sf::Vector2<int> position;
+        HighlightType highlightType;
+
+        HighlightedSquare(const sf::Vector2<int> newPosition, const HighlightType newColourType) : position(newPosition), highlightType(newColourType) {}
+    };
+
+    std::optional<HighlightedSquare> currentMoveHighlightedSquare;
+    std::vector<HighlightedSquare> previousMoveHighlightedSquares;
+    std::vector<HighlightedSquare> validMoveHighlightedSquares;
+
 public:
     BoardView();
-    void drawBoard(sf::RenderWindow& window, const std::vector<HighlightedSquare>& highlightedSquares) const;
+    void drawBoard(sf::RenderWindow& window) const;
     void drawPieces(sf::RenderWindow& window, const std::array<std::array<std::optional<Piece>, 8>, 8>& piecePositions, std::optional<sf::Vector2<int>> excludedSquare) const;
     void drawSelectedPiece(sf::RenderWindow& window, Piece piece, int mouseX, int mouseY) const;
     void drawPawnPromotionPieces(sf::RenderWindow& window, Piece::Colour pieceColour, sf::Vector2f pawnPromotionSquare) const;
-    [[nodiscard]] sf::Vector2f getSquare(int mouseX, int mouseY) const;
+    void pickupPieceFromBoard(sf::Vector2<int> startSquare, const std::vector<sf::Vector2<int>>& validMovableSquares);
+    void placePieceOnBoard(bool pieceMoved, sf::Vector2<int> endSquare);
+    [[nodiscard]] sf::Vector2<int> getSquare(int mouseX, int mouseY) const;
 
 private:
     const sf::Texture& GetPieceTexture(Piece piece) const;

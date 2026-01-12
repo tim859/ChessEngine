@@ -7,6 +7,17 @@ Game::Game() {
     previousGameStatesFrequency[currentGameState] = 1;
 }
 
+std::vector<sf::Vector2<int>> Game::getValidMovableSquares(const GameState &gameState, const sf::Vector2<int> startSquare) const {
+    std::vector<sf::Vector2<int>> validMovableSquares;
+    for (int rank = 0; rank < 8; ++rank) {
+        for (int file = 0; file < 8; ++file) {
+            if (const auto move = Move(startSquare, sf::Vector2(file, rank)); checkIsMoveLegal(gameState, move))
+                validMovableSquares.emplace_back(file, rank);
+        }
+    }
+    return validMovableSquares;
+}
+
 // contains very little validation, invalid/incomplete fen strings will cause exceptions and/or undefined behaviour
 void Game::populateCurrentGameStateWithFen(const std::string& fen) {
     // TODO: pass in the gamestate so the function can be used on any gamestate instead of just the current one
@@ -90,10 +101,10 @@ void Game::populateCurrentGameStateWithFen(const std::string& fen) {
     currentGameState.fullMoveCounter = std::stoi(fenInfo[4]);
 }
 
-void Game::pickupPieceFromBoard(const sf::Vector2<int> startSquare) {
+bool Game::pickupPieceFromBoard(const sf::Vector2<int> startSquare) {
     // check there is a piece at the drag location
     if (!currentGameState.boardPosition[startSquare.y][startSquare.x])
-        return;
+        return false;
 
     selectedPieceStartSquare = startSquare;
     selectedPiece = currentGameState.boardPosition[startSquare.y][startSquare.x];
@@ -102,34 +113,12 @@ void Game::pickupPieceFromBoard(const sf::Vector2<int> startSquare) {
     if (selectedPiece->colour != currentGameState.moveColour) {
         selectedPieceStartSquare = std::nullopt;
         selectedPiece = std::nullopt;
-        return;
+        return false;
     }
-
-    // should be impossible for this to have anything in it but just in case
-    validMoveHighlightedSquares.clear();
-
-    // loop through all squares on the board and mark them to be highlighted if the piece can move there
-    for (int rank = 0; rank < 8; ++rank) {
-        for (int file = 0; file < 8; ++file) {
-            if (const auto move = Move(startSquare, sf::Vector2(file, rank)); checkIsMoveLegal(currentGameState, move))
-                validMoveHighlightedSquares.emplace_back(sf::Vector2(file, rank), HighlightedSquare::HighlightType::VALIDMOVE);
-        }
-    }
-
-    // replace alternating VALIDMOVE squares with ALTVALIDMOVE squares if they are in a straight line from the start square
-    const auto alternateStraightHighlightedSquares = getAlternatingStraightHighlightedSquares();
-    for (auto& highlightedSquare : validMoveHighlightedSquares) {
-        for (const auto& altHighlightedSquare : alternateStraightHighlightedSquares) {
-            if (highlightedSquare.position == altHighlightedSquare.position) {
-                highlightedSquare.highlightType = HighlightedSquare::HighlightType::VALIDMOVEALT;
-                break;
-            }
-        }
-    }
+    return true;
 }
 
 Game::MoveType Game::placePieceOnBoard(const sf::Vector2<int> endSquare) {
-    validMoveHighlightedSquares.clear();
     auto moveType = MoveType::NONE;
 
     // ensure the piece and the piece start square will be valid for all the functions that need them and get called from this function
@@ -141,11 +130,6 @@ Game::MoveType Game::placePieceOnBoard(const sf::Vector2<int> endSquare) {
     // determine if piece can move to this square and move it if so
     if (checkIsMoveLegal(currentGameState, Move(selectedPieceStartSquare.value(), endSquare))) {
         moveType = movePiece(currentGameState, Move(selectedPieceStartSquare.value(), endSquare));
-        // stop highlighting the last moves squares
-        previousMoveHighlightedSquares.clear();
-        // highlight this moves squares
-        previousMoveHighlightedSquares.emplace_back(selectedPieceStartSquare.value(), HighlightedSquare::HighlightType::STARTMOVE);
-        previousMoveHighlightedSquares.emplace_back(endSquare, HighlightedSquare::HighlightType::STOPMOVE);
 
         // check to see if a pawn has reached the other side and can be promoted
         if (checkForPawnPromotion(currentGameState)) {
@@ -190,20 +174,6 @@ void Game::promotePawn(GameState& gameState, const Piece::Type pieceType) {
     gameState.boardPosition[gameState.pawnPendingPromotionSquare.value().y][gameState.pawnPendingPromotionSquare.value().x] = Piece(pieceType, gameState.pawnPendingPromotionColour.value());
     gameState.pawnPendingPromotionSquare = std::nullopt;
     gameState.pawnPendingPromotionColour = std::nullopt;
-}
-
-// return all highlightedSquares as one vector
-std::vector<HighlightedSquare> Game::getHighlightedSquares() const {
-    auto highlightedSquares = previousMoveHighlightedSquares;
-
-    if (selectedPieceStartSquare)
-        highlightedSquares.emplace_back(selectedPieceStartSquare.value(), HighlightedSquare::HighlightType::STARTMOVE);
-
-    // if there are any duplicate squares (due to validMoveSquares overlapping previousMoveSquares) then the ones later in the vector will have priority
-    // validMoveSquares should have priority over the others so those are appended on to the other vector to ensure they are displayed
-    for (auto highlightedSquare : validMoveHighlightedSquares)
-        highlightedSquares.emplace_back(highlightedSquare);
-    return highlightedSquares;
 }
 
 Game::MoveType Game::movePiece(GameState& gameState, const Move move) const {
@@ -686,23 +656,4 @@ bool Game::checkForPawnPromotion(const GameState &gameState) const {
         }
     }
     return false;
-}
-
-bool Game::checkFor50MoveDraw(const GameState &gameState) const {
-    return false;
-}
-
-std::vector<HighlightedSquare> Game::getAlternatingStraightHighlightedSquares() const {
-    std::vector<HighlightedSquare> alternatingStraightHighlightedSquares;
-    for (const auto& highlightedSquare : validMoveHighlightedSquares) {
-        // ignore squares that aren't either horizontally or vertically aligned with the start square
-        if (highlightedSquare.position.x != selectedPieceStartSquare->x && highlightedSquare.position.y != selectedPieceStartSquare->y)
-            continue;
-        // compute Manhattan distance
-        const auto distanceFromStart = std::abs(highlightedSquare.position.x - selectedPieceStartSquare->x) + std::abs(highlightedSquare.position.y - selectedPieceStartSquare->y);
-        // use distance to calculate whether the square is alternating
-        if (distanceFromStart % 2 == 1)
-            alternatingStraightHighlightedSquares.emplace_back(highlightedSquare);
-    }
-    return alternatingStraightHighlightedSquares;
 }

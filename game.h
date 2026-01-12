@@ -39,15 +39,6 @@ struct Piece {
     }
 };
 
-struct HighlightedSquare {
-    enum class HighlightType {STARTMOVE, STOPMOVE, VALIDMOVE, VALIDMOVEALT};
-
-    sf::Vector2<int> position;
-    HighlightType highlightType;
-
-    HighlightedSquare(const sf::Vector2<int> newPosition, const HighlightType newColourType) : position(newPosition), highlightType(newColourType) {}
-};
-
 struct Move {
     sf::Vector2<int> startSquare;
     sf::Vector2<int> endSquare;
@@ -59,6 +50,7 @@ struct GameState {
     // the 2d array that all the positions of the pieces will be held in
     // remember that while the array will hold piece positions as [row][column], vector2's hold positions as (x, y) aka [column][row]
     // therefore whenever you use a vector2 to find a position in the 2d array you need to index it using [vector.y][vector.x]
+    // also remember that the origin ([0][0] for the array and (0, 0) for vectors) is the top left corner of the board for both the array and vectors
     std::array<std::array<std::optional<Piece>, 8>, 8> boardPosition;
     Piece::Colour moveColour = Piece::Colour::WHITE;
     int fullMoveCounter = 0;
@@ -93,15 +85,12 @@ struct GameState {
 };
 
 class Game {
+    // -------------------- game state members
+
     GameState currentGameState;
     std::map<GameState, int> previousGameStatesFrequency;
-
-    // -------------------- game state/UI members
-
     std::optional<Piece> selectedPiece;
     std::optional<sf::Vector2<int>> selectedPieceStartSquare;
-    std::vector<HighlightedSquare> previousMoveHighlightedSquares;
-    std::vector<HighlightedSquare> validMoveHighlightedSquares;
 
     // -------------------- castling positions --------------------
 
@@ -114,8 +103,9 @@ class Game {
 
 public:
     enum class MoveType {NONE, MOVESELF, CAPTURE, CASTLE, PROMOTEPAWN, TFRDRAW, FIFTYMOVEDRAW, STALEMATE, CHECKMATE};
-
     Game();
+
+    // -------------------- getters --------------------
 
     [[nodiscard]] GameState& getCurrentGameState() {return currentGameState;}
     [[nodiscard]] std::array<std::array<std::optional<Piece>, 8>, 8> getCurrentBoardPosition() const {return currentGameState.boardPosition;}
@@ -123,15 +113,17 @@ public:
     [[nodiscard]] std::optional<Piece> getSelectedPiece() const {return selectedPiece;}
     [[nodiscard]] std::optional<sf::Vector2<int>> getCurrentPawnPendingPromotionSquare() const {return currentGameState.pawnPendingPromotionSquare;}
     [[nodiscard]] std::optional<Piece::Colour> getCurrentPawnPendingPromotionColour() const {return currentGameState.pawnPendingPromotionColour;}
+    [[nodiscard]] std::vector<sf::Vector2<int>> getValidMovableSquares(const GameState& gameState, sf::Vector2<int> startSquare) const;
+
+    // -------------------- public application functions (modify the game state) --------------------
 
     void populateCurrentGameStateWithFen(const std::string& fen);
-    void pickupPieceFromBoard(sf::Vector2<int> startSquare);
+    bool pickupPieceFromBoard(sf::Vector2<int> startSquare);
     MoveType placePieceOnBoard(sf::Vector2<int> endSquare);
     void promotePawn(GameState& gameState, Piece::Type pieceType);
-    [[nodiscard]] std::vector<HighlightedSquare> getHighlightedSquares() const;
 
 private:
-    // -------------------- application functions (modify the game state) --------------------
+    // -------------------- private application functions (modify the game state) --------------------
 
     MoveType movePiece(GameState& gameState, Move move) const;
     void updateCastlingRights(GameState& gameState, Move move) const;
@@ -151,9 +143,6 @@ private:
     [[nodiscard]] bool checkIsKingInCheck(const GameState& gameState, Piece::Colour kingColour) const;
     [[nodiscard]] bool checkForStalemate(const GameState& gameState) const;
     [[nodiscard]] bool checkForPawnPromotion(const GameState& gameState) const;
-    [[nodiscard]] bool checkFor50MoveDraw(const GameState& gameState) const;
-
-    [[nodiscard]] std::vector<HighlightedSquare> getAlternatingStraightHighlightedSquares() const;
 };
 
 #endif //CHESS_GAME_H
