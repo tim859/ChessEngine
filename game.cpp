@@ -7,7 +7,7 @@ Game::Game() {
     previousGameStatesFrequency[currentGameState] = 1;
 }
 
-std::vector<sf::Vector2<int>> Game::getValidMovableSquares(const GameState &gameState, const sf::Vector2<int> startSquare) const {
+std::vector<sf::Vector2<int>> Game::generateLegalMovesForSquare(const GameState &gameState, const sf::Vector2<int> startSquare) const {
     std::vector<sf::Vector2<int>> validMovableSquares;
     for (int rank = 0; rank < 8; ++rank) {
         for (int file = 0; file < 8; ++file) {
@@ -16,6 +16,32 @@ std::vector<sf::Vector2<int>> Game::getValidMovableSquares(const GameState &game
         }
     }
     return validMovableSquares;
+}
+
+std::vector<Move> Game::generateAllLegalMoves(const GameState &gameState) {
+    // generate all possible pseudo legal moves first then filter by actual legal moves
+    // this reduces computation as unnecessarily simulating game states is more expensive than unnecessarily checking for pseudo legal moves
+    std::vector<Move> validMoves;
+    for (auto startSquareRank = 0; startSquareRank < 8; ++startSquareRank) {
+        for (auto startSquareFile = 0; startSquareFile < 8; ++startSquareFile) {
+            if (gameState.boardPosition[startSquareRank][startSquareFile].has_value()) {
+                if (gameState.boardPosition[startSquareRank][startSquareFile].value().colour == gameState.moveColour) {
+                    for (auto endSquareRank = 0; endSquareRank < 8; ++endSquareRank) {
+                        for (auto endSquareFile = 0; endSquareFile < 8; ++endSquareFile) {
+                            if (const auto move = Move(sf::Vector2(startSquareRank, startSquareFile), sf::Vector2(endSquareRank, endSquareFile)); checkIsMoveValid(gameState, move)) {
+                                validMoves.emplace_back(move);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::vector<Move> legalMoves;
+    for (const auto& move : validMoves) {
+        if (checkIsMoveLegal(gameState, move))
+            legalMoves.emplace_back(move);
+    }
 }
 
 // contains very little validation, invalid/incomplete fen strings will cause exceptions and/or undefined behaviour

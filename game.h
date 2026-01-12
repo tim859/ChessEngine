@@ -113,7 +113,8 @@ public:
     [[nodiscard]] std::optional<Piece> getSelectedPiece() const {return selectedPiece;}
     [[nodiscard]] std::optional<sf::Vector2<int>> getCurrentPawnPendingPromotionSquare() const {return currentGameState.pawnPendingPromotionSquare;}
     [[nodiscard]] std::optional<Piece::Colour> getCurrentPawnPendingPromotionColour() const {return currentGameState.pawnPendingPromotionColour;}
-    [[nodiscard]] std::vector<sf::Vector2<int>> getValidMovableSquares(const GameState& gameState, sf::Vector2<int> startSquare) const;
+    [[nodiscard]] std::vector<sf::Vector2<int>> generateLegalMovesForSquare(const GameState& gameState, sf::Vector2<int> startSquare) const;
+    std::vector<Move> generateAllLegalMoves(const GameState& gameState);
 
     // -------------------- public application functions (modify the game state) --------------------
 

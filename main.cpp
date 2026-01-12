@@ -1,8 +1,10 @@
 #include "boardview.h"
 #include "game.h"
+#include "engine.h"
 #include <SFML/Graphics.hpp>
 #include <SFML/Graphics/Text.hpp>
 #include <SFML/Audio.hpp>
+#include <thread>
 #include <iostream>
 
 int main()
@@ -10,12 +12,15 @@ int main()
     sf::Vector2 mousePosition = {0, 0};
     Game game;
     BoardView boardView;
+    Engine engine;
     sf::RenderWindow window(sf::VideoMode({1200, 1200}), "Chess");
     const int squareSize = 150;
     auto stalemate = false;
     auto checkmate = false;
     auto tFRDraw = false;
     auto fiftyMoveDraw = false;
+    auto engineTurn = false;
+    auto engineThinking = false;
 
     // -------------------- audio --------------------
     sf::SoundBuffer moveSelfBuffer("assets/move-self.mp3");
@@ -80,6 +85,15 @@ int main()
             if (stalemate || checkmate)
                 break;
 
+            if (engineTurn) {
+                if (!engineThinking) {
+                    // TODO: create new thread that calls engine.generateEngineMove(game.generateAllLegalMoves(game.getCurrentGameState())
+                }
+                // TODO: check if engine thread has finished thinking, if it has then consume the move and terminate the thread, also engineTurn = false and engineThinking = false
+                // TODO: if it hasn't finished thinking then allow it to continue
+                break;
+            }
+
             // update the stored mouse position whenever the left mouse button is pressed or released or the mouse is moved
             if (const auto* mouseButtonPressed = event->getIf<sf::Event::MouseButtonPressed>())
             {
@@ -101,7 +115,7 @@ int main()
                         break;
                     }
                     if (const sf::Vector2<int> startSquare = boardView.getSquare(mouseButtonPressed->position.x, mouseButtonPressed->position.y); game.pickupPieceFromBoard(startSquare))
-                        boardView.pickupPieceFromBoard(startSquare, game.getValidMovableSquares(game.getCurrentGameState(), startSquare));
+                        boardView.pickupPieceFromBoard(startSquare, game.generateLegalMovesForSquare(game.getCurrentGameState(), startSquare));
                 }
             }
 
