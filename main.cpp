@@ -4,6 +4,8 @@
 #include <SFML/Graphics.hpp>
 #include <SFML/Graphics/Text.hpp>
 #include <SFML/Audio.hpp>
+#include <atomic>
+#include <mutex>
 #include <thread>
 #include <iostream>
 
@@ -21,6 +23,10 @@ int main()
     auto fiftyMoveDraw = false;
     auto engineTurn = false;
     auto engineThinking = false;
+    std::jthread engineThread;
+    std::mutex engineMoveMutex;
+    std::optional<Move> pendingEngineMove;
+    std::atomic<bool> engineMoveReady = false;
 
     // -------------------- audio --------------------
     sf::SoundBuffer moveSelfBuffer("assets/move-self.mp3");
@@ -87,10 +93,64 @@ int main()
 
             if (engineTurn) {
                 if (!engineThinking) {
-                    // TODO: create new thread that calls engine.generateEngineMove(game.generateAllLegalMoves(game.getCurrentGameState())
+                    auto legalMoves = game.generateAllLegalMoves(game.getCurrentGameState());
+                    engineMoveReady.store(false, std::memory_order_relaxed);
+                    engineThinking = true;
+                    engineThread = std::jthread([&engine, &engineMoveMutex, &pendingEngineMove, &engineMoveReady, legalMoves = std::move(legalMoves)]() mutable {
+                        const auto move = engine.generateEngineMove(std::move(legalMoves));
+                        {
+                            std::scoped_lock lock(engineMoveMutex);
+                            pendingEngineMove = move;
+                        }
+                        engineMoveReady.store(true, std::memory_order_release);
+                    });
                 }
-                // TODO: check if engine thread has finished thinking, if it has then consume the move and terminate the thread, also engineTurn = false and engineThinking = false
-                // TODO: if it hasn't finished thinking then allow it to continue
+                if (engineThinking && engineMoveReady.load(std::memory_order_acquire)) {
+                    Move engineMove{{0, 0}, {0, 0}};
+                    {
+                        std::scoped_lock lock(engineMoveMutex);
+                        if (!pendingEngineMove) {
+                            break;
+                        }
+                        engineMove = *pendingEngineMove;
+                        pendingEngineMove = std::nullopt;
+                    }
+                    if (engineThread.joinable()) {
+                        engineThread.join();
+                    }
+                    engineThinking = false;
+                    engineTurn = false;
+                    if (game.pickupPieceFromBoard(engineMove.startSquare)) {
+                        const auto moveType = game.placePieceOnBoard(engineMove.endSquare);
+                        boardView.placePieceOnBoard(moveType != Game::MoveType::NONE, engineMove.endSquare);
+                        switch (moveType) {
+                            case Game::MoveType::MOVESELF:
+                                moveSelfSound.play();
+                                break;
+                            case Game::MoveType::CAPTURE:
+                                captureSound.play();
+                                break;
+                            case Game::MoveType::CASTLE:
+                                castleSound.play();
+                                break;
+                            case Game::MoveType::STALEMATE:
+                                stalemate = true;
+                                break;
+                            case Game::MoveType::CHECKMATE:
+                                checkmate = true;
+                                break;
+                            case Game::MoveType::TFRDRAW:
+                                tFRDraw = true;
+                                break;
+                            case Game::MoveType::FIFTYMOVEDRAW:
+                                fiftyMoveDraw = true;
+                                break;
+                            case Game::MoveType::PROMOTEPAWN:
+                            case Game::MoveType::NONE:
+                                break;
+                        }
+                    }
+                }
                 break;
             }
 
