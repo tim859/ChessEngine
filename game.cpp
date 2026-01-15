@@ -42,6 +42,7 @@ std::vector<Move> Game::generateAllLegalMoves(const GameState &gameState) {
         if (checkIsMoveLegal(gameState, move))
             legalMoves.emplace_back(move);
     }
+    return legalMoves;
 }
 
 // contains very little validation, invalid/incomplete fen strings will cause exceptions and/or undefined behaviour
