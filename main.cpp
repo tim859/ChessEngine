@@ -4,8 +4,8 @@
 #include "audio.h"
 #include <SFML/Graphics.hpp>
 #include <SFML/Graphics/Text.hpp>
-#include <SFML/Audio.hpp>
 #include <thread>
+#include <mutex>
 #include <iostream>
 
 sf::Vector2 mousePosition = {0, 0};
@@ -15,12 +15,11 @@ Engine engine;
 Audio audio;
 sf::RenderWindow window(sf::VideoMode({1200, 1200}), "Chess");
 const int squareSize = 150;
-auto stalemate = false;
-auto checkmate = false;
-auto tFRDraw = false;
-auto fiftyMoveDraw = false;
 auto engineTurn = false;
 auto engineThinking = false;
+std::jthread engineThread;
+std::mutex engineMoveMutex;
+std::optional<Move> pendingEngineMove;
 
 // -------------------- ui --------------------
 
@@ -39,8 +38,8 @@ void processUserInput(const std::optional<sf::Event> &event) {
     if (event->is<sf::Event::Resized>())
         window.setSize({squareSize * 8, squareSize * 8});
 
-    // no user input processed if game is already over
-    if (stalemate || checkmate || engineTurn)
+    // // game is over so no further processing needed
+    if (game.getCurrentGameOverType() != GameTypes::GameOverType::CONTINUE || engineTurn)
         return;
 
     // update the stored mouse position whenever the left mouse button is pressed or released or the mouse is moved
@@ -76,28 +75,13 @@ void processUserInput(const std::optional<sf::Event> &event) {
         {
             mousePosition = {mouseButtonReleased->position.x, mouseButtonReleased->position.y};
             const auto moveType = game.placePieceOnBoard(boardView.getSquare(mouseButtonReleased->position.x, mouseButtonReleased->position.y));
-            boardView.placePieceOnBoard(moveType != Game::MoveType::NONE, boardView.getSquare(mouseButtonReleased->position.x, mouseButtonReleased->position.y));
-            if (moveType != Game::MoveType::NONE)
+            boardView.placePieceOnBoard(moveType != GameTypes::MoveType::NONE, boardView.getSquare(mouseButtonReleased->position.x, mouseButtonReleased->position.y));
+
+            if (moveType != GameTypes::MoveType::NONE)
                 engineTurn = true;
 
             // play corresponding audio file of the move
             audio.playSound(moveType);
-
-            // check for game over conditions
-            switch (moveType) {
-                case Game::MoveType::STALEMATE:
-                    stalemate = true;
-                    break;
-                case Game::MoveType::CHECKMATE:
-                    checkmate = true;
-                    break;
-                case Game::MoveType::TFRDRAW:
-                    tFRDraw = true;
-                    break;
-                case Game::MoveType::FIFTYMOVEDRAW:
-                    fiftyMoveDraw = true;
-                    break;
-            }
         }
     }
 }
@@ -130,31 +114,88 @@ void drawWindow() {
 
         boardView.drawPawnPromotionPieces(window, game.getCurrentPawnPendingPromotionColour().value(), static_cast<sf::Vector2f>(game.getCurrentPawnPendingPromotionSquare().value()));
     }
-    if (stalemate) {
+    if (game.getCurrentGameOverType() != GameTypes::GameOverType::CONTINUE) {
+        switch (game.getCurrentGameOverType()) {
+            case GameTypes::GameOverType::STALEMATE:
+                gameOverText.setString("STALEMATE");
+                break;
+            case GameTypes::GameOverType::TFRDRAW:
+                gameOverText.setString("DRAW BY THREEFOLD REPETITION");
+                break;
+            case GameTypes::GameOverType::FIFTYMOVEDRAW:
+                gameOverText.setString("DRAW BY 50 MOVE RULE");
+                break;
+            case GameTypes::GameOverType::WHITEWINBYCHECKMATE:
+                gameOverText.setString("WHITE WINS BY CHECKMATE");
+                break;
+            case GameTypes::GameOverType::BLACKWINBYCHECKMATE:
+                gameOverText.setString("BLACK WINS BY CHECKMATE");
+                break;
+            case GameTypes::GameOverType::WHITEWINBYRESIGN:
+                gameOverText.setString("WHITE WINS BY RESIGNATION");
+                break;
+            case GameTypes::GameOverType::BLACKWINBYRESIGN:
+                gameOverText.setString("BLACK WINS BY RESIGNATION");
+                break;
+        }
         window.draw(gameOverOverlay);
-        gameOverText.setString("STALEMATE");
-        window.draw(gameOverText);
-    }
-    if (checkmate) {
-        window.draw(gameOverOverlay);
-        gameOverText.setString("CHECKMATE");
-        window.draw(gameOverText);
-    }
-    if (tFRDraw) {
-        window.draw(gameOverOverlay);
-        gameOverText.setString("DRAW BY THREEFOLD REPETITION");
-        window.draw(gameOverText);
-    }
-    if (fiftyMoveDraw) {
-        window.draw(gameOverOverlay);
-        gameOverText.setString("DRAW BY 50 MOVE RULE");
         window.draw(gameOverText);
     }
     window.display();
 }
 
-int main() {
+void processEngineMove() {
+    // game is over so no processing needed
+    if (game.getCurrentGameOverType() != GameTypes::GameOverType::CONTINUE)
+        return;
 
+    if (!engineThinking) {
+        auto legalMoves = game.generateAllLegalMoves(game.getCurrentGameState());
+        if (legalMoves.empty()) {
+            // the game is either drawn or lost for the engine
+            std::cout << "no legal moves left for engine" << std::endl;
+            return;
+        }
+
+        engineThinking = true;
+        // spawn a new worker thread that will allow the engine to spend time thinking about the move without freezing the main thread and therefore the program
+        engineThread = std::jthread([legalMoves = std::move(legalMoves)] {
+            Move move = engine.generateEngineMove(legalMoves);
+            std::scoped_lock lock(engineMoveMutex);
+            pendingEngineMove = move;
+        });
+    }
+    else {
+        // safely (threadwise) get the value in pendingEngineMove
+        std::optional<Move> move;
+        {
+            std::scoped_lock lock(engineMoveMutex);
+            move = pendingEngineMove;
+            if (move) {
+                pendingEngineMove.reset();
+            }
+        }
+
+        // if there was a valid move in pendingEngineMove, the worker thread is killed and the move is applied on the board
+        if (move) {
+            if (engineThread.joinable()) {
+                engineThread.join();
+            }
+            engineThinking = false;
+
+            game.pickupPieceFromBoard(move->startSquare);
+            boardView.pickupPieceFromBoard(move->startSquare, game.generateLegalMovesForSquare(game.getCurrentGameState(), move->startSquare));
+
+            const auto moveType = game.placePieceOnBoard(move->endSquare);
+            boardView.placePieceOnBoard(moveType != GameTypes::MoveType::NONE, move->endSquare);
+
+            audio.playSound(moveType);
+            engineTurn = false;
+        }
+    }
+}
+
+int main() {
     gameOverOverlay.setFillColor(sf::Color(0, 0, 0, 150));
     gameOverText.setFillColor(sf::Color::White);
     gameOverText.setCharacterSize(120);
@@ -166,15 +207,8 @@ int main() {
     // run the program as long as the window is open
     while (window.isOpen())
     {
-        if (engineTurn) {
-            if (!engineThinking) {
-                const auto legalMoves = game.generateAllLegalMoves(game.getCurrentGameState());
-                std::thread engineThread([legalMoves]() mutable {
-                    engine.generateEngineMove(legalMoves);
-                });
-            }
-            break;
-        }
+        if (engineTurn)
+            processEngineMove();
 
         // check all the windows events that were triggered since the last iteration of the loop
         while (const std::optional event = window.pollEvent())
