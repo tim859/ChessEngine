@@ -12,33 +12,23 @@ Audio::Audio() : moveSelfSound(moveSelfBuffer), captureSound(captureBuffer), cas
         std::cerr << "Could not load castle.mp3 into sound buffer" << std::endl;
 }
 
-void Audio::playSound(const Game::MoveType moveType) {
+void Audio::playSound(const GameTypes::MoveType moveType) {
     switch (moveType) {
-        case Game::MoveType::NONE:
+        case GameTypes::MoveType::NONE:
             break;
-        case Game::MoveType::MOVESELF:
+        case GameTypes::MoveType::MOVESELF:
             moveSelfSound.play();
             break;
-        case Game::MoveType::CAPTURE:
+        case GameTypes::MoveType::CAPTURE:
             captureSound.play();
             break;
-        case Game::MoveType::CASTLE:
+        case GameTypes::MoveType::CASTLE:
             castleSound.play();
             break;
-        case Game::MoveType::TFRDRAW:
+        case GameTypes::MoveType::PROMOTEPAWN:
             moveSelfSound.play();
             break;
-        case Game::MoveType::FIFTYMOVEDRAW:
-            moveSelfSound.play();
-            break;
-        case Game::MoveType::PROMOTEPAWN:
-            moveSelfSound.play();
-            break;
-        case Game::MoveType::STALEMATE:
-            moveSelfSound.play();
-            break;
-        case Game::MoveType::CHECKMATE:
-            moveSelfSound.play();
+        case GameTypes::MoveType::GAMEOVER:
             break;
     }
 }

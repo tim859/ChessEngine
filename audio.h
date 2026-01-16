@@ -13,7 +13,7 @@ class Audio {
 
 public:
     Audio();
-    void playSound(Game::MoveType moveType);
+    void playSound(GameTypes::MoveType moveType);
 };
 
 #endif //CHESS_AUDIO_H
