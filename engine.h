@@ -5,7 +5,7 @@
 
 class Engine {
 public:
-    Move generateEngineMove(std::vector<Move> legalMoves);
+    Move generateEngineMove(const std::vector<Move> &legalMoves);
 };
 
 #endif //CHESS_ENGINE_H
