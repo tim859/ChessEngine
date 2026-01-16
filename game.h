@@ -7,6 +7,11 @@
 #include <vector>
 #include <SFML/System/Vector2.hpp>
 
+namespace GameTypes {
+    enum class MoveType {NONE, MOVESELF, CAPTURE, CASTLE, PROMOTEPAWN, GAMEOVER};
+    enum class GameOverType {CONTINUE, STALEMATE, TFRDRAW, FIFTYMOVEDRAW, WHITEWINBYCHECKMATE, BLACKWINBYCHECKMATE, WHITEWINBYRESIGN, BLACKWINBYRESIGN};
+}
+
 namespace sf {
     inline bool operator<(const Vector2<int>& first, const Vector2<int>& second) {
         if (first.x != second.x) return first.x < second.x;
@@ -65,6 +70,7 @@ struct GameState {
     int movesSinceEnPassant = 0;
     std::optional<sf::Vector2<int>> pawnPendingPromotionSquare;
     std::optional<Piece::Colour> pawnPendingPromotionColour;
+    GameTypes::GameOverType gameOverType = GameTypes::GameOverType::CONTINUE;
 
     bool operator==(const GameState& other) const {
         return boardPosition == other.boardPosition &&
@@ -102,7 +108,6 @@ class Game {
     const sf::Vector2<int> blackKingsideRookStartSquare = sf::Vector2(7, 0);
 
 public:
-    enum class MoveType {NONE, MOVESELF, CAPTURE, CASTLE, PROMOTEPAWN, TFRDRAW, FIFTYMOVEDRAW, STALEMATE, CHECKMATE};
     Game();
 
     // -------------------- getters --------------------
@@ -113,20 +118,24 @@ public:
     [[nodiscard]] std::optional<Piece> getSelectedPiece() const {return selectedPiece;}
     [[nodiscard]] std::optional<sf::Vector2<int>> getCurrentPawnPendingPromotionSquare() const {return currentGameState.pawnPendingPromotionSquare;}
     [[nodiscard]] std::optional<Piece::Colour> getCurrentPawnPendingPromotionColour() const {return currentGameState.pawnPendingPromotionColour;}
+    [[nodiscard]] GameTypes::GameOverType getCurrentGameOverType() const {return currentGameState.gameOverType;}
     [[nodiscard]] std::vector<sf::Vector2<int>> generateLegalMovesForSquare(const GameState& gameState, sf::Vector2<int> startSquare) const;
-    std::vector<Move> generateAllLegalMoves(const GameState& gameState);
 
     // -------------------- public application functions (modify the game state) --------------------
 
+    // TODO: move away from using selectedPiece and selectedPieceSquare so these functions can be used on any gamestate instead of just the current one
+    // TODO: will need to modify the way that main checks for a few things as it uses selectedPiece and selectedPieceSquare for some things
     void populateCurrentGameStateWithFen(const std::string& fen);
     bool pickupPieceFromBoard(sf::Vector2<int> startSquare);
-    MoveType placePieceOnBoard(sf::Vector2<int> endSquare);
-    void promotePawn(GameState& gameState, Piece::Type pieceType);
+
+    GameTypes::MoveType placePieceOnBoard(sf::Vector2<int> endSquare);
+    void promotePawn(GameState& gameState, Piece::Type pieceType) const;
+    [[nodiscard]] std::vector<Move> generateAllLegalMoves(const GameState& gameState) const;
 
 private:
     // -------------------- private application functions (modify the game state) --------------------
 
-    MoveType movePiece(GameState& gameState, Move move) const;
+    GameTypes::MoveType movePiece(GameState& gameState, Move move) const;
     void updateCastlingRights(GameState& gameState, Move move) const;
     void castleRook(GameState& gameState, int rook) const;
 
@@ -142,7 +151,6 @@ private:
     [[nodiscard]] bool checkForEnPassantTake(const GameState& gameState, Move move) const;
     [[nodiscard]] bool checkIsSquareUnderAttack(const GameState& gameState, sf::Vector2<int> square, Piece::Colour enemyColour) const;
     [[nodiscard]] bool checkIsKingInCheck(const GameState& gameState, Piece::Colour kingColour) const;
-    [[nodiscard]] bool checkForStalemate(const GameState& gameState) const;
     [[nodiscard]] bool checkForPawnPromotion(const GameState& gameState) const;
 };
 

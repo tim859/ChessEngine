@@ -18,33 +18,6 @@ std::vector<sf::Vector2<int>> Game::generateLegalMovesForSquare(const GameState 
     return validMovableSquares;
 }
 
-std::vector<Move> Game::generateAllLegalMoves(const GameState &gameState) {
-    // generate all possible pseudo legal moves first then filter by actual legal moves
-    // this reduces computation as unnecessarily simulating game states is more expensive than unnecessarily checking for pseudo legal moves
-    std::vector<Move> validMoves;
-    for (auto startSquareRank = 0; startSquareRank < 8; ++startSquareRank) {
-        for (auto startSquareFile = 0; startSquareFile < 8; ++startSquareFile) {
-            if (gameState.boardPosition[startSquareRank][startSquareFile].has_value()) {
-                if (gameState.boardPosition[startSquareRank][startSquareFile].value().colour == gameState.moveColour) {
-                    for (auto endSquareRank = 0; endSquareRank < 8; ++endSquareRank) {
-                        for (auto endSquareFile = 0; endSquareFile < 8; ++endSquareFile) {
-                            if (const auto move = Move(sf::Vector2(startSquareRank, startSquareFile), sf::Vector2(endSquareRank, endSquareFile)); checkIsMoveValid(gameState, move)) {
-                                validMoves.emplace_back(move);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    std::vector<Move> legalMoves;
-    for (const auto& move : validMoves) {
-        if (checkIsMoveLegal(gameState, move))
-            legalMoves.emplace_back(move);
-    }
-    return legalMoves;
-}
-
 // contains very little validation, invalid/incomplete fen strings will cause exceptions and/or undefined behaviour
 void Game::populateCurrentGameStateWithFen(const std::string& fen) {
     // TODO: pass in the gamestate so the function can be used on any gamestate instead of just the current one
@@ -77,7 +50,7 @@ void Game::populateCurrentGameStateWithFen(const std::string& fen) {
             std::cerr << "fen string contains invalid character" << std::endl;
     }
 
-    // get each of the 5 pieces of game state information that fen contains aside from the piece positions
+    // get each of the 5 pieces of game state information that fen contains after the piece positions
     std::array<std::string, 5> fenInfo;
     auto fenIndex = firstSpaceIndex;
     for (auto& i : fenInfo) {
@@ -129,7 +102,7 @@ void Game::populateCurrentGameStateWithFen(const std::string& fen) {
 }
 
 bool Game::pickupPieceFromBoard(const sf::Vector2<int> startSquare) {
-    // check there is a piece at the drag location
+    // check there is a piece at the start square
     if (!currentGameState.boardPosition[startSquare.y][startSquare.x])
         return false;
 
@@ -145,8 +118,8 @@ bool Game::pickupPieceFromBoard(const sf::Vector2<int> startSquare) {
     return true;
 }
 
-Game::MoveType Game::placePieceOnBoard(const sf::Vector2<int> endSquare) {
-    auto moveType = MoveType::NONE;
+GameTypes::MoveType Game::placePieceOnBoard(const sf::Vector2<int> endSquare) {
+    auto moveType = GameTypes::MoveType::NONE;
 
     // ensure the piece and the piece start square will be valid for all the functions that need them and get called from this function
     if (!selectedPieceStartSquare)
@@ -168,32 +141,44 @@ Game::MoveType Game::placePieceOnBoard(const sf::Vector2<int> endSquare) {
         if (previousGameStatesFrequency.contains(currentGameState)) {
             ++previousGameStatesFrequency[currentGameState];
             // check for threefold repetition draw
-            if (previousGameStatesFrequency[currentGameState] >= 3)
-                moveType = MoveType::TFRDRAW;
+            if (previousGameStatesFrequency[currentGameState] >= 3) {
+                moveType = GameTypes::MoveType::GAMEOVER;
+                currentGameState.gameOverType = GameTypes::GameOverType::TFRDRAW;
+            }
         }
         else
             previousGameStatesFrequency[currentGameState] = 1;
 
         // check for 50 moves since a piece capture or a pawn moving aka the 50 move draw
-        if (moveType == MoveType::CAPTURE || currentGameState.boardPosition[endSquare.y][endSquare.x].value().type == Piece::Type::PAWN)
+        if (moveType == GameTypes::MoveType::CAPTURE || currentGameState.boardPosition[endSquare.y][endSquare.x].value().type == Piece::Type::PAWN)
             currentGameState.halfMovesSinceLastActiveMove = 0;
         else {
             ++currentGameState.halfMovesSinceLastActiveMove;
-            if (currentGameState.halfMovesSinceLastActiveMove >= 50)
-                moveType = MoveType::FIFTYMOVEDRAW;
+            if (currentGameState.halfMovesSinceLastActiveMove >= 50) {
+                moveType = GameTypes::MoveType::GAMEOVER;
+                currentGameState.gameOverType = GameTypes::GameOverType::FIFTYMOVEDRAW;
+            }
         }
-        std::cout << currentGameState.halfMovesSinceLastActiveMove << std::endl;
 
         // check for stalemate and checkmate
-        if (checkForStalemate(currentGameState))
-            moveType = checkIsKingInCheck(currentGameState, currentGameState.moveColour) ? MoveType::CHECKMATE : MoveType::STALEMATE;
+        if (generateAllLegalMoves(currentGameState).empty()) {
+            moveType = GameTypes::MoveType::GAMEOVER;
+            if (checkIsKingInCheck(currentGameState, currentGameState.moveColour)) {
+                if (currentGameState.moveColour == Piece::Colour::WHITE)
+                    currentGameState.gameOverType = GameTypes::GameOverType::BLACKWINBYCHECKMATE;
+                else
+                    currentGameState.gameOverType = GameTypes::GameOverType::WHITEWINBYCHECKMATE;
+            }
+            else
+                currentGameState.gameOverType = GameTypes::GameOverType::STALEMATE;
+        }
     }
     selectedPieceStartSquare = std::nullopt;
     selectedPiece = std::nullopt;
     return moveType;
 }
 
-void Game::promotePawn(GameState& gameState, const Piece::Type pieceType) {
+void Game::promotePawn(GameState& gameState, const Piece::Type pieceType) const {
     if (!gameState.pawnPendingPromotionSquare || !gameState.pawnPendingPromotionColour)
         return;
     if (!gameState.boardPosition[gameState.pawnPendingPromotionSquare.value().y][gameState.pawnPendingPromotionSquare.value().x])
@@ -203,8 +188,34 @@ void Game::promotePawn(GameState& gameState, const Piece::Type pieceType) {
     gameState.pawnPendingPromotionColour = std::nullopt;
 }
 
-Game::MoveType Game::movePiece(GameState& gameState, const Move move) const {
-    auto moveType = MoveType::NONE;
+std::vector<Move> Game::generateAllLegalMoves(const GameState &gameState) const {
+    // generate all possible pseudo legal moves first then filter by actual legal moves
+    // this reduces computation as unnecessarily simulating game states is more expensive than unnecessarily checking for pseudo legal moves
+    std::vector<Move> validMoves;
+    for (auto startSquareRank = 0; startSquareRank < 8; ++startSquareRank) {
+        for (auto startSquareFile = 0; startSquareFile < 8; ++startSquareFile) {
+            if (gameState.boardPosition[startSquareRank][startSquareFile].has_value()) {
+                if (gameState.boardPosition[startSquareRank][startSquareFile].value().colour == gameState.moveColour) {
+                    for (auto endSquareRank = 0; endSquareRank < 8; ++endSquareRank) {
+                        for (auto endSquareFile = 0; endSquareFile < 8; ++endSquareFile) {
+                            if (const auto move = Move(sf::Vector2(startSquareFile, startSquareRank), sf::Vector2(endSquareFile, endSquareRank)); checkIsMoveValid(gameState, move))
+                                validMoves.emplace_back(move);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::vector<Move> legalMoves;
+    for (const auto& move : validMoves) {
+        if (checkIsMoveLegal(gameState, move))
+            legalMoves.emplace_back(move);
+    }
+    return legalMoves;
+}
+
+GameTypes::MoveType Game::movePiece(GameState& gameState, const Move move) const {
+    auto moveType = GameTypes::MoveType::NONE;
     const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
 
     // ---------- en passant ---------------
@@ -222,7 +233,7 @@ Game::MoveType Game::movePiece(GameState& gameState, const Move move) const {
         // therefore we can get the forward direction of the other colour and use it to find the square with the pawn to be taken on it
         const auto enemyForwardStep = gameState.moveColour == Piece::Colour::WHITE ? 1 : -1;
         gameState.boardPosition[gameState.enPassantSquare->y + enemyForwardStep][gameState.enPassantSquare->x] = std::nullopt;
-        moveType = MoveType::CAPTURE;
+        moveType = GameTypes::MoveType::CAPTURE;
     }
 
     // allow one move before en passant is no longer available
@@ -240,15 +251,15 @@ Game::MoveType Game::movePiece(GameState& gameState, const Move move) const {
     // 0 = no rook needs castling, 1 = white queenside rook, 2 = white kingside rook, 3 = black queenside rook, 4 = black kingside rook
     if (const auto rookIndex = checkForCastle(gameState, move); rookIndex > 0) {
         castleRook(gameState, rookIndex);
-        moveType = MoveType::CASTLE;
+        moveType = GameTypes::MoveType::CASTLE;
     }
     updateCastlingRights(gameState, move);
 
-    if (moveType == MoveType::NONE) {
+    if (moveType == GameTypes::MoveType::NONE) {
         if (gameState.boardPosition[move.endSquare.y][move.endSquare.x])
-            moveType = MoveType::CAPTURE;
+            moveType = GameTypes::MoveType::CAPTURE;
         else
-            moveType = MoveType::MOVESELF;
+            moveType = GameTypes::MoveType::MOVESELF;
     }
 
     // remove the piece from the start square
@@ -650,26 +661,6 @@ bool Game::checkIsKingInCheck(const GameState& gameState, const Piece::Colour ki
     // should never happen during a normal game but if somehow a king wasn't found on the board
     std::cerr << "no king was found on the board of this colour!" << std::endl;
     return false;
-}
-
-bool Game::checkForStalemate(const GameState &gameState) const {
-    for (int startRank = 0; startRank < 8; ++startRank) {
-        for (int startFile = 0; startFile < 8; ++startFile) {
-            if (!gameState.boardPosition[startRank][startFile])
-                continue;
-            if (gameState.boardPosition[startRank][startFile]->colour != gameState.moveColour)
-                continue;
-
-            for (int endRank = 0; endRank < 8; ++endRank) {
-                for (int endFile = 0; endFile < 8; ++endFile) {
-                    if (checkIsMoveLegal(gameState, Move(sf::Vector2(startFile, startRank), sf::Vector2(endFile, endRank)))) {
-                        return false;
-                    }
-                }
-            }
-        }
-    }
-    return true;
 }
 
 bool Game::checkForPawnPromotion(const GameState &gameState) const {
