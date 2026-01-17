@@ -25,7 +25,6 @@ std::optional<Move> pendingEngineMove;
 
 sf::RectangleShape gameOverOverlay(sf::Vector2f(window.getSize().x, window.getSize().y));
 sf::RectangleShape pawnPromotionOverlay(sf::Vector2f(squareSize, squareSize * 4));
-
 const sf::Font calibriFont("assets/calibri.ttf");
 sf::Text gameOverText(calibriFont);
 
@@ -74,7 +73,7 @@ void processUserInput(const std::optional<sf::Event> &event) {
         if (mouseButtonReleased->button == sf::Mouse::Button::Left)
         {
             mousePosition = {mouseButtonReleased->position.x, mouseButtonReleased->position.y};
-            const auto moveType = game.placePieceOnBoard(game.getCurrentGameState(), boardView.getSquare(mouseButtonReleased->position.x, mouseButtonReleased->position.y));
+            const auto moveType = game.placePieceOnBoard(game.getCurrentGameState(), boardView.getSquare(mouseButtonReleased->position.x, mouseButtonReleased->position.y), game.getCurrentGameStateHistory());
             boardView.placePieceOnBoard(moveType != GameTypes::MoveType::NONE, boardView.getSquare(mouseButtonReleased->position.x, mouseButtonReleased->position.y));
 
             if (moveType != GameTypes::MoveType::NONE)
@@ -186,7 +185,7 @@ void processEngineMove() {
             game.pickupPieceFromBoard(game.getCurrentGameState(), move->startSquare);
             boardView.pickupPieceFromBoard(move->startSquare, game.generateLegalMovesForSquare(game.getCurrentGameState(), move->startSquare));
 
-            const auto moveType = game.placePieceOnBoard(game.getCurrentGameState(), move->endSquare);
+            const auto moveType = game.placePieceOnBoard(game.getCurrentGameState(), move->endSquare, game.getCurrentGameStateHistory());
             boardView.placePieceOnBoard(moveType != GameTypes::MoveType::NONE, move->endSquare);
 
             audio.playSound(moveType);

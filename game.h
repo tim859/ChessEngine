@@ -2,6 +2,7 @@
 #define CHESS_GAME_H
 #include <array>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -51,6 +52,7 @@ struct Move {
     Move(const sf::Vector2<int> newStartPosition, const sf::Vector2<int> newEndPosition) : startSquare(newStartPosition), endSquare(newEndPosition) {}
 };
 
+// TODO: replace as many instances of std::optional<> as possible with pointers or smart pointers, they're just better
 struct GameState {
     std::optional<Piece> selectedPiece;
     std::optional<sf::Vector2<int>> selectedPieceStartSquare;
@@ -75,11 +77,7 @@ struct GameState {
     GameTypes::GameOverType gameOverType = GameTypes::GameOverType::CONTINUE;
 
     bool operator==(const GameState& other) const {
-        return boardPosition == other.boardPosition &&
-               moveColour == other.moveColour &&
-               whiteCastleRights == other.whiteCastleRights &&
-               blackCastleRights == other.blackCastleRights &&
-               enPassantSquare == other.enPassantSquare;
+        return boardPosition == other.boardPosition;
     }
 
     bool operator<(const GameState& other) const {
@@ -96,7 +94,7 @@ class Game {
     // -------------------- game state members
 
     GameState currentGameState;
-    std::map<GameState, int> previousGameStatesFrequency;
+    std::map<GameState, int>* currentGameStateHistory;
 
     // -------------------- castling positions --------------------
 
@@ -112,6 +110,7 @@ public:
     // -------------------- getters --------------------
 
     [[nodiscard]] GameState& getCurrentGameState() {return currentGameState;}
+    [[nodiscard]] std::map<GameState, int>* getCurrentGameStateHistory() const {return currentGameStateHistory;}
     [[nodiscard]] std::array<std::array<std::optional<Piece>, 8>, 8> getCurrentBoardPosition() const {return currentGameState.boardPosition;}
     [[nodiscard]] std::optional<sf::Vector2<int>> getCurrentSelectedPieceStartSquare() const {return currentGameState.selectedPieceStartSquare;}
     [[nodiscard]] std::optional<Piece> getCurrentSelectedPiece() const {return currentGameState.selectedPiece;}
@@ -124,7 +123,7 @@ public:
 
     void populateCurrentGameStateWithFen(const std::string& fen);
     bool pickupPieceFromBoard(GameState& gameState, sf::Vector2<int> startSquare) const;
-    GameTypes::MoveType placePieceOnBoard(GameState& gameState, sf::Vector2<int> endSquare) const;
+    GameTypes::MoveType placePieceOnBoard(GameState& gameState, sf::Vector2<int> endSquare, std::map<GameState, int>*) const;
     void promotePawn(GameState& gameState, Piece::Type pieceType) const;
     [[nodiscard]] std::vector<Move> generateAllLegalMoves(const GameState& gameState) const;
 

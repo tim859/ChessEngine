@@ -3,8 +3,8 @@
 #include <iostream>
 #include <map>
 
-Game::Game() {
-    previousGameStatesFrequency[currentGameState] = 1;
+Game::Game() : currentGameStateHistory(new std::map<GameState, int>()) {
+    (*currentGameStateHistory)[currentGameState] = 1;
 }
 
 std::vector<sf::Vector2<int>> Game::generateLegalMovesForSquare(const GameState &gameState, const sf::Vector2<int> startSquare) const {
@@ -118,7 +118,7 @@ bool Game::pickupPieceFromBoard(GameState& gameState, const sf::Vector2<int> sta
     return true;
 }
 
-GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const sf::Vector2<int> endSquare) const {
+GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const sf::Vector2<int> endSquare, std::map<GameState, int>* gameStateHistory) const {
     auto moveType = GameTypes::MoveType::NONE;
 
     // ensure the piece and the piece start square will be valid for all the functions that need them and get called from this function
@@ -137,17 +137,20 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const sf::Vect
             gameState.pawnPendingPromotionColour = gameState.moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE;
         }
 
-        // record current game state position
-        if (previousGameStatesFrequency.contains(gameState)) {
-            ++previousGameStatesFrequency[gameState];
-            // check for threefold repetition draw
-            if (previousGameStatesFrequency[gameState] >= 3) {
-                moveType = GameTypes::MoveType::GAMEOVER;
-                gameState.gameOverType = GameTypes::GameOverType::TFRDRAW;
+        if (gameStateHistory) {
+            // check for this game state/board position appearing previously and increment its number of appearances if so
+            if (gameStateHistory->contains(gameState)) {
+                ++(*gameStateHistory)[gameState];
+                // check for threefold repetition draw
+                if ((*gameStateHistory)[gameState] >= 3) {
+                    moveType = GameTypes::MoveType::GAMEOVER;
+                    gameState.gameOverType = GameTypes::GameOverType::TFRDRAW;
+                }
             }
+            else
+                // record the first instance of this game state/board position
+                (*gameStateHistory)[gameState] = 1;
         }
-        else
-            previousGameStatesFrequency[gameState] = 1;
 
         // check for 50 moves since a piece capture or a pawn moving aka the 50 move draw
         if (moveType == GameTypes::MoveType::CAPTURE || gameState.boardPosition[endSquare.y][endSquare.x].value().type == Piece::Type::PAWN)
