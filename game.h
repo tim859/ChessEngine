@@ -52,6 +52,8 @@ struct Move {
 };
 
 struct GameState {
+    std::optional<Piece> selectedPiece;
+    std::optional<sf::Vector2<int>> selectedPieceStartSquare;
     // the 2d array that all the positions of the pieces will be held in
     // remember that while the array will hold piece positions as [row][column], vector2's hold positions as (x, y) aka [column][row]
     // therefore whenever you use a vector2 to find a position in the 2d array you need to index it using [vector.y][vector.x]
@@ -95,8 +97,6 @@ class Game {
 
     GameState currentGameState;
     std::map<GameState, int> previousGameStatesFrequency;
-    std::optional<Piece> selectedPiece;
-    std::optional<sf::Vector2<int>> selectedPieceStartSquare;
 
     // -------------------- castling positions --------------------
 
@@ -109,13 +109,12 @@ class Game {
 
 public:
     Game();
-
     // -------------------- getters --------------------
 
     [[nodiscard]] GameState& getCurrentGameState() {return currentGameState;}
     [[nodiscard]] std::array<std::array<std::optional<Piece>, 8>, 8> getCurrentBoardPosition() const {return currentGameState.boardPosition;}
-    [[nodiscard]] std::optional<sf::Vector2<int>> getSelectedPieceStartSquare() const {return selectedPieceStartSquare;}
-    [[nodiscard]] std::optional<Piece> getSelectedPiece() const {return selectedPiece;}
+    [[nodiscard]] std::optional<sf::Vector2<int>> getCurrentSelectedPieceStartSquare() const {return currentGameState.selectedPieceStartSquare;}
+    [[nodiscard]] std::optional<Piece> getCurrentSelectedPiece() const {return currentGameState.selectedPiece;}
     [[nodiscard]] std::optional<sf::Vector2<int>> getCurrentPawnPendingPromotionSquare() const {return currentGameState.pawnPendingPromotionSquare;}
     [[nodiscard]] std::optional<Piece::Colour> getCurrentPawnPendingPromotionColour() const {return currentGameState.pawnPendingPromotionColour;}
     [[nodiscard]] GameTypes::GameOverType getCurrentGameOverType() const {return currentGameState.gameOverType;}
@@ -123,12 +122,9 @@ public:
 
     // -------------------- public application functions (modify the game state) --------------------
 
-    // TODO: move away from using selectedPiece and selectedPieceSquare so these functions can be used on any gamestate instead of just the current one
-    // TODO: will need to modify the way that main checks for a few things as it uses selectedPiece and selectedPieceSquare for some things
     void populateCurrentGameStateWithFen(const std::string& fen);
-    bool pickupPieceFromBoard(sf::Vector2<int> startSquare);
-
-    GameTypes::MoveType placePieceOnBoard(sf::Vector2<int> endSquare);
+    bool pickupPieceFromBoard(GameState& gameState, sf::Vector2<int> startSquare) const;
+    GameTypes::MoveType placePieceOnBoard(GameState& gameState, sf::Vector2<int> endSquare) const;
     void promotePawn(GameState& gameState, Piece::Type pieceType) const;
     [[nodiscard]] std::vector<Move> generateAllLegalMoves(const GameState& gameState) const;
 

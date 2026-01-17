@@ -62,7 +62,7 @@ void processUserInput(const std::optional<sf::Event> &event) {
                     game.promotePawn(game.getCurrentGameState(), Piece::Type::BISHOP);
                 return;
             }
-            if (const sf::Vector2<int> startSquare = boardView.getSquare(mouseButtonPressed->position.x, mouseButtonPressed->position.y); game.pickupPieceFromBoard(startSquare))
+            if (const sf::Vector2<int> startSquare = boardView.getSquare(mouseButtonPressed->position.x, mouseButtonPressed->position.y); game.pickupPieceFromBoard(game.getCurrentGameState(), startSquare))
                 boardView.pickupPieceFromBoard(startSquare, game.generateLegalMovesForSquare(game.getCurrentGameState(), startSquare));
         }
     }
@@ -74,7 +74,7 @@ void processUserInput(const std::optional<sf::Event> &event) {
         if (mouseButtonReleased->button == sf::Mouse::Button::Left)
         {
             mousePosition = {mouseButtonReleased->position.x, mouseButtonReleased->position.y};
-            const auto moveType = game.placePieceOnBoard(boardView.getSquare(mouseButtonReleased->position.x, mouseButtonReleased->position.y));
+            const auto moveType = game.placePieceOnBoard(game.getCurrentGameState(), boardView.getSquare(mouseButtonReleased->position.x, mouseButtonReleased->position.y));
             boardView.placePieceOnBoard(moveType != GameTypes::MoveType::NONE, boardView.getSquare(mouseButtonReleased->position.x, mouseButtonReleased->position.y));
 
             if (moveType != GameTypes::MoveType::NONE)
@@ -92,12 +92,12 @@ void drawWindow() {
     // -------------------------- always drawn -----------------------
 
     boardView.drawBoard(window);
-    boardView.drawPieces(window, game.getCurrentBoardPosition(), game.getSelectedPieceStartSquare());
+    boardView.drawPieces(window, game.getCurrentBoardPosition(), game.getCurrentSelectedPieceStartSquare());
 
     // ------------------------- conditionally drawn
 
-    if (game.getSelectedPiece())
-        boardView.drawSelectedPiece(window, game.getSelectedPiece().value(), mousePosition.x, mousePosition.y);
+    if (game.getCurrentSelectedPiece())
+        boardView.drawSelectedPiece(window, game.getCurrentSelectedPiece().value(), mousePosition.x, mousePosition.y);
     if (game.getCurrentPawnPendingPromotionSquare() && game.getCurrentPawnPendingPromotionColour()) {
         int pawnPromotionOverlayY;
         if (game.getCurrentPawnPendingPromotionColour().value() == Piece::Colour::WHITE) {
@@ -183,10 +183,10 @@ void processEngineMove() {
             }
             engineThinking = false;
 
-            game.pickupPieceFromBoard(move->startSquare);
+            game.pickupPieceFromBoard(game.getCurrentGameState(), move->startSquare);
             boardView.pickupPieceFromBoard(move->startSquare, game.generateLegalMovesForSquare(game.getCurrentGameState(), move->startSquare));
 
-            const auto moveType = game.placePieceOnBoard(move->endSquare);
+            const auto moveType = game.placePieceOnBoard(game.getCurrentGameState(), move->endSquare);
             boardView.placePieceOnBoard(moveType != GameTypes::MoveType::NONE, move->endSquare);
 
             audio.playSound(moveType);

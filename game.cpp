@@ -101,80 +101,80 @@ void Game::populateCurrentGameStateWithFen(const std::string& fen) {
     currentGameState.fullMoveCounter = std::stoi(fenInfo[4]);
 }
 
-bool Game::pickupPieceFromBoard(const sf::Vector2<int> startSquare) {
+bool Game::pickupPieceFromBoard(GameState& gameState, const sf::Vector2<int> startSquare) const {
     // check there is a piece at the start square
-    if (!currentGameState.boardPosition[startSquare.y][startSquare.x])
+    if (!gameState.boardPosition[startSquare.y][startSquare.x])
         return false;
 
-    selectedPieceStartSquare = startSquare;
-    selectedPiece = currentGameState.boardPosition[startSquare.y][startSquare.x];
+    gameState.selectedPieceStartSquare = startSquare;
+    gameState.selectedPiece = gameState.boardPosition[startSquare.y][startSquare.x];
 
     // check the piece is the same colour as the colour of whose turn it is
-    if (selectedPiece->colour != currentGameState.moveColour) {
-        selectedPieceStartSquare = std::nullopt;
-        selectedPiece = std::nullopt;
+    if (gameState.selectedPiece->colour != gameState.moveColour) {
+        gameState.selectedPieceStartSquare = std::nullopt;
+        gameState.selectedPiece = std::nullopt;
         return false;
     }
     return true;
 }
 
-GameTypes::MoveType Game::placePieceOnBoard(const sf::Vector2<int> endSquare) {
+GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const sf::Vector2<int> endSquare) const {
     auto moveType = GameTypes::MoveType::NONE;
 
     // ensure the piece and the piece start square will be valid for all the functions that need them and get called from this function
-    if (!selectedPieceStartSquare)
+    if (!gameState.selectedPieceStartSquare)
         return moveType;
-    if (!currentGameState.boardPosition[selectedPieceStartSquare.value().y][selectedPieceStartSquare.value().x])
+    if (!gameState.boardPosition[gameState.selectedPieceStartSquare.value().y][gameState.selectedPieceStartSquare.value().x])
         return moveType;
 
     // determine if piece can move to this square and move it if so
-    if (checkIsMoveLegal(currentGameState, Move(selectedPieceStartSquare.value(), endSquare))) {
-        moveType = movePiece(currentGameState, Move(selectedPieceStartSquare.value(), endSquare));
+    if (checkIsMoveLegal(gameState, Move(gameState.selectedPieceStartSquare.value(), endSquare))) {
+        moveType = movePiece(gameState, Move(gameState.selectedPieceStartSquare.value(), endSquare));
 
         // check to see if a pawn has reached the other side and can be promoted
-        if (checkForPawnPromotion(currentGameState)) {
-            currentGameState.pawnPendingPromotionSquare = endSquare;
-            currentGameState.pawnPendingPromotionColour = currentGameState.moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE;
+        if (checkForPawnPromotion(gameState)) {
+            gameState.pawnPendingPromotionSquare = endSquare;
+            gameState.pawnPendingPromotionColour = gameState.moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE;
         }
 
         // record current game state position
-        if (previousGameStatesFrequency.contains(currentGameState)) {
-            ++previousGameStatesFrequency[currentGameState];
+        if (previousGameStatesFrequency.contains(gameState)) {
+            ++previousGameStatesFrequency[gameState];
             // check for threefold repetition draw
-            if (previousGameStatesFrequency[currentGameState] >= 3) {
+            if (previousGameStatesFrequency[gameState] >= 3) {
                 moveType = GameTypes::MoveType::GAMEOVER;
-                currentGameState.gameOverType = GameTypes::GameOverType::TFRDRAW;
+                gameState.gameOverType = GameTypes::GameOverType::TFRDRAW;
             }
         }
         else
-            previousGameStatesFrequency[currentGameState] = 1;
+            previousGameStatesFrequency[gameState] = 1;
 
         // check for 50 moves since a piece capture or a pawn moving aka the 50 move draw
-        if (moveType == GameTypes::MoveType::CAPTURE || currentGameState.boardPosition[endSquare.y][endSquare.x].value().type == Piece::Type::PAWN)
-            currentGameState.halfMovesSinceLastActiveMove = 0;
+        if (moveType == GameTypes::MoveType::CAPTURE || gameState.boardPosition[endSquare.y][endSquare.x].value().type == Piece::Type::PAWN)
+            gameState.halfMovesSinceLastActiveMove = 0;
         else {
-            ++currentGameState.halfMovesSinceLastActiveMove;
-            if (currentGameState.halfMovesSinceLastActiveMove >= 50) {
+            ++gameState.halfMovesSinceLastActiveMove;
+            if (gameState.halfMovesSinceLastActiveMove >= 50) {
                 moveType = GameTypes::MoveType::GAMEOVER;
-                currentGameState.gameOverType = GameTypes::GameOverType::FIFTYMOVEDRAW;
+                gameState.gameOverType = GameTypes::GameOverType::FIFTYMOVEDRAW;
             }
         }
 
         // check for stalemate and checkmate
-        if (generateAllLegalMoves(currentGameState).empty()) {
+        if (generateAllLegalMoves(gameState).empty()) {
             moveType = GameTypes::MoveType::GAMEOVER;
-            if (checkIsKingInCheck(currentGameState, currentGameState.moveColour)) {
-                if (currentGameState.moveColour == Piece::Colour::WHITE)
-                    currentGameState.gameOverType = GameTypes::GameOverType::BLACKWINBYCHECKMATE;
+            if (checkIsKingInCheck(gameState, gameState.moveColour)) {
+                if (gameState.moveColour == Piece::Colour::WHITE)
+                    gameState.gameOverType = GameTypes::GameOverType::BLACKWINBYCHECKMATE;
                 else
-                    currentGameState.gameOverType = GameTypes::GameOverType::WHITEWINBYCHECKMATE;
+                    gameState.gameOverType = GameTypes::GameOverType::WHITEWINBYCHECKMATE;
             }
             else
-                currentGameState.gameOverType = GameTypes::GameOverType::STALEMATE;
+                gameState.gameOverType = GameTypes::GameOverType::STALEMATE;
         }
     }
-    selectedPieceStartSquare = std::nullopt;
-    selectedPiece = std::nullopt;
+    gameState.selectedPieceStartSquare = std::nullopt;
+    gameState.selectedPiece = std::nullopt;
     return moveType;
 }
 
