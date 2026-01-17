@@ -149,8 +149,7 @@ void processEngineMove() {
         return;
 
     if (!engineThinking) {
-        auto legalMoves = game.generateAllLegalMoves(game.getCurrentGameState());
-        if (legalMoves.empty()) {
+        if (const auto legalMoves = game.generateAllLegalMoves(game.getCurrentGameState()); legalMoves.empty()) {
             // the game is either drawn or lost for the engine
             std::cout << "no legal moves left for engine" << std::endl;
             return;
@@ -158,8 +157,8 @@ void processEngineMove() {
 
         engineThinking = true;
         // spawn a new worker thread that will allow the engine to spend time thinking about the move without freezing the main thread and therefore the program
-        engineThread = std::jthread([legalMoves = std::move(legalMoves)] {
-            Move move = engine.generateEngineMove(legalMoves);
+        engineThread = std::jthread([] {
+            Move move = engine.generateEngineMove(game);
             std::scoped_lock lock(engineMoveMutex);
             pendingEngineMove = move;
         });

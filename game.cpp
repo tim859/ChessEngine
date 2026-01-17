@@ -2,9 +2,10 @@
 #include <algorithm>
 #include <iostream>
 #include <map>
+#include <ranges>
 
-Game::Game() : currentGameStateHistory(new std::map<GameState, int>()) {
-    (*currentGameStateHistory)[currentGameState] = 1;
+Game::Game() {
+    currentGameStateHistory = new std::vector<GameState>;
 }
 
 std::vector<sf::Vector2<int>> Game::generateLegalMovesForSquare(const GameState &gameState, const sf::Vector2<int> startSquare) const {
@@ -99,6 +100,8 @@ void Game::populateCurrentGameStateWithFen(const std::string& fen) {
     currentGameState.halfMoveCounter = std::stoi(fenInfo[3]);
     // 5: full move counter
     currentGameState.fullMoveCounter = std::stoi(fenInfo[4]);
+
+    currentGameStateHistory->emplace_back(currentGameState);
 }
 
 bool Game::pickupPieceFromBoard(GameState& gameState, const sf::Vector2<int> startSquare) const {
@@ -118,7 +121,7 @@ bool Game::pickupPieceFromBoard(GameState& gameState, const sf::Vector2<int> sta
     return true;
 }
 
-GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const sf::Vector2<int> endSquare, std::map<GameState, int>* gameStateHistory) const {
+GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const sf::Vector2<int> endSquare, std::vector<GameState>* gameStateHistory) const {
     auto moveType = GameTypes::MoveType::NONE;
 
     // ensure the piece and the piece start square will be valid for all the functions that need them and get called from this function
@@ -129,52 +132,7 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const sf::Vect
 
     // determine if piece can move to this square and move it if so
     if (checkIsMoveLegal(gameState, Move(gameState.selectedPieceStartSquare.value(), endSquare))) {
-        moveType = movePiece(gameState, Move(gameState.selectedPieceStartSquare.value(), endSquare));
-
-        // check to see if a pawn has reached the other side and can be promoted
-        if (checkForPawnPromotion(gameState)) {
-            gameState.pawnPendingPromotionSquare = endSquare;
-            gameState.pawnPendingPromotionColour = gameState.moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE;
-        }
-
-        if (gameStateHistory) {
-            // check for this game state/board position appearing previously and increment its number of appearances if so
-            if (gameStateHistory->contains(gameState)) {
-                ++(*gameStateHistory)[gameState];
-                // check for threefold repetition draw
-                if ((*gameStateHistory)[gameState] >= 3) {
-                    moveType = GameTypes::MoveType::GAMEOVER;
-                    gameState.gameOverType = GameTypes::GameOverType::TFRDRAW;
-                }
-            }
-            else
-                // record the first instance of this game state/board position
-                (*gameStateHistory)[gameState] = 1;
-        }
-
-        // check for 50 moves since a piece capture or a pawn moving aka the 50 move draw
-        if (moveType == GameTypes::MoveType::CAPTURE || gameState.boardPosition[endSquare.y][endSquare.x].value().type == Piece::Type::PAWN)
-            gameState.halfMovesSinceLastActiveMove = 0;
-        else {
-            ++gameState.halfMovesSinceLastActiveMove;
-            if (gameState.halfMovesSinceLastActiveMove >= 50) {
-                moveType = GameTypes::MoveType::GAMEOVER;
-                gameState.gameOverType = GameTypes::GameOverType::FIFTYMOVEDRAW;
-            }
-        }
-
-        // check for stalemate and checkmate
-        if (generateAllLegalMoves(gameState).empty()) {
-            moveType = GameTypes::MoveType::GAMEOVER;
-            if (checkIsKingInCheck(gameState, gameState.moveColour)) {
-                if (gameState.moveColour == Piece::Colour::WHITE)
-                    gameState.gameOverType = GameTypes::GameOverType::BLACKWINBYCHECKMATE;
-                else
-                    gameState.gameOverType = GameTypes::GameOverType::WHITEWINBYCHECKMATE;
-            }
-            else
-                gameState.gameOverType = GameTypes::GameOverType::STALEMATE;
-        }
+        moveType = movePiece(gameState, Move(gameState.selectedPieceStartSquare.value(), endSquare), gameStateHistory);
     }
     gameState.selectedPieceStartSquare = std::nullopt;
     gameState.selectedPiece = std::nullopt;
@@ -217,9 +175,12 @@ std::vector<Move> Game::generateAllLegalMoves(const GameState &gameState) const 
     return legalMoves;
 }
 
-GameTypes::MoveType Game::movePiece(GameState& gameState, const Move move) const {
+GameTypes::MoveType Game::movePiece(GameState& gameState, const Move move, std::vector<GameState>* gameStateHistory) const {
     auto moveType = GameTypes::MoveType::NONE;
     const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
+
+    if (gameStateHistory)
+        gameStateHistory->emplace_back(gameState);
 
     // ---------- en passant ---------------
 
@@ -273,7 +234,61 @@ GameTypes::MoveType Game::movePiece(GameState& gameState, const Move move) const
     ++gameState.halfMoveCounter;
     if (gameState.halfMoveCounter % 2 == 0)
         ++gameState.fullMoveCounter;
+
+    // check to see if a pawn has reached the other side and can be promoted
+    if (checkForPawnPromotion(gameState)) {
+        gameState.pawnPendingPromotionSquare = move.endSquare;
+        gameState.pawnPendingPromotionColour = gameState.moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE;
+    }
+
+    if (gameStateHistory) {
+        // check for how many times this gamestate (specifically board position) has appeared, if it is 3 or more then the game is drawn by threefold repetition
+        auto gameStateFrequency = 0;
+        for (const auto& previousGameState : *gameStateHistory) {
+            if (gameState == previousGameState) {
+                ++gameStateFrequency;
+                if (gameStateFrequency >= 3) {
+                    moveType = GameTypes::MoveType::GAMEOVER;
+                    gameState.gameOverType = GameTypes::GameOverType::TFRDRAW;
+                }
+            }
+        }
+    }
+
+    // check for 50 moves since a piece capture or a pawn moving aka the 50 move draw
+    if (moveType == GameTypes::MoveType::CAPTURE || gameState.boardPosition[move.endSquare.y][move.endSquare.x].value().type == Piece::Type::PAWN)
+        gameState.halfMovesSinceLastActiveMove = 0;
+    else {
+        ++gameState.halfMovesSinceLastActiveMove;
+        if (gameState.halfMovesSinceLastActiveMove >= 50) {
+            moveType = GameTypes::MoveType::GAMEOVER;
+            gameState.gameOverType = GameTypes::GameOverType::FIFTYMOVEDRAW;
+        }
+    }
+
+    // check for stalemate and checkmate
+    if (generateAllLegalMoves(gameState).empty()) {
+        moveType = GameTypes::MoveType::GAMEOVER;
+        if (checkIsKingInCheck(gameState, gameState.moveColour)) {
+            if (gameState.moveColour == Piece::Colour::WHITE)
+                gameState.gameOverType = GameTypes::GameOverType::BLACKWINBYCHECKMATE;
+            else
+                gameState.gameOverType = GameTypes::GameOverType::WHITEWINBYCHECKMATE;
+        }
+        else
+            gameState.gameOverType = GameTypes::GameOverType::STALEMATE;
+    }
     return moveType;
+}
+
+void Game::undoLastMove(GameState &gameState, std::vector<GameState>* gameStateHistory) {
+    if (gameStateHistory->empty()) {
+        std::cerr << "Cannot undo - no history" << std::endl;
+        return;
+    }
+
+    gameState = gameStateHistory->back();
+    gameStateHistory->pop_back();
 }
 
 void Game::updateCastlingRights(GameState& gameState, const Move move) const {
@@ -390,7 +405,7 @@ bool Game::checkIsMoveLegal(const GameState& gameState, const Move move) const {
 
     // simulate the board position if the move was to be made
     auto simulatedGameState = gameState;
-    movePiece(simulatedGameState, move);
+    movePiece(simulatedGameState, move, nullptr);
 
     // disallow moves that would leave the king in check
     if (checkIsKingInCheck(simulatedGameState, gameState.moveColour))
