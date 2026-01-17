@@ -16,9 +16,11 @@ Move Engine::generateEngineMove(Game& game) {
 
 int Engine::evaluateBoardPosition(const GameState& gameState) const {
     const auto evaluation = countMaterial(gameState, Piece::Colour::WHITE) - countMaterial(gameState, Piece::Colour::BLACK);;
+    const auto perspective = gameState.moveColour == Piece::Colour::WHITE ? 1 : -1;
     //std::cout << "evaluation: " << evaluation << std::endl;
-    return evaluation;
+    return evaluation * perspective;
 }
+
 
 int Engine::countMaterial(const GameState& gameState, const Piece::Colour pieceColour) const {
     auto material = 0;
@@ -41,11 +43,11 @@ int Engine::searchMoves(Game& game, GameState& gameState, std::vector<GameState>
     auto moves = game.generateAllLegalMoves(gameState);
     if (moves.empty()) {
         if (game.checkIsKingInCheck(gameState, gameState.moveColour))
-            return -std::numeric_limits<int>::infinity();
+            return std::numeric_limits<int>::lowest();
         return 0;
     }
 
-    int bestEvaluation = -std::numeric_limits<int>::infinity();
+    int bestEvaluation = std::numeric_limits<int>::lowest();
 
     for (const auto& move : moves) {
         game.movePiece(gameState, move, gameStateHistory);
