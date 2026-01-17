@@ -7,14 +7,17 @@ Move Engine::generateEngineMove(Game& game) {
     // call searchMoves with a simulated gamestate that mirrors the current gamestate
     auto simulatedGameState = game.getCurrentGameState();
     auto* simulatedGameStateHistory = new std::vector<GameState>{simulatedGameState};
-    searchMoves(game, simulatedGameState, simulatedGameStateHistory, 1);
-    return *bestMove;
+    bestMove = game.generateAllLegalMoves(simulatedGameState).front();
+    searchMoves(game, simulatedGameState, simulatedGameStateHistory, 4, 4);
+    if (bestMoveChanged == 0)
+        std::cout << "a better move was never found" << std::endl;
+    return bestMove;
 }
 
 int Engine::evaluateBoardPosition(const GameState& gameState) const {
-    const auto evaluation = countMaterial(gameState, Piece::Colour::WHITE) - countMaterial(gameState, Piece::Colour::BLACK);
-    const auto perspective = gameState.moveColour == Piece::Colour::WHITE ? 1 : -1;
-    return evaluation * perspective;
+    const auto evaluation = countMaterial(gameState, Piece::Colour::WHITE) - countMaterial(gameState, Piece::Colour::BLACK);;
+    //std::cout << "evaluation: " << evaluation << std::endl;
+    return evaluation;
 }
 
 int Engine::countMaterial(const GameState& gameState, const Piece::Colour pieceColour) const {
@@ -27,14 +30,15 @@ int Engine::countMaterial(const GameState& gameState, const Piece::Colour pieceC
             }
         }
     }
+    //std::cout << "material: " << material << std::endl;
     return material;
 }
 
-int Engine::searchMoves(Game& game, GameState& gameState, std::vector<GameState>* gameStateHistory, const int depth) {
+int Engine::searchMoves(Game& game, GameState& gameState, std::vector<GameState>* gameStateHistory, const int depth, const int initialDepth) {
     if (depth == 0)
         return evaluateBoardPosition(gameState);
 
-    const auto moves = game.generateAllLegalMoves(gameState);
+    auto moves = game.generateAllLegalMoves(gameState);
     if (moves.empty()) {
         if (game.checkIsKingInCheck(gameState, gameState.moveColour))
             return -std::numeric_limits<int>::infinity();
@@ -45,10 +49,14 @@ int Engine::searchMoves(Game& game, GameState& gameState, std::vector<GameState>
 
     for (const auto& move : moves) {
         game.movePiece(gameState, move, gameStateHistory);
-        int evaluation = -searchMoves(game, gameState, gameStateHistory, depth - 1);
+        int evaluation = -searchMoves(game, gameState, gameStateHistory, depth - 1, initialDepth);
         if (evaluation > bestEvaluation) {
             bestEvaluation = evaluation;
-            *bestMove = move;
+            if (depth == initialDepth) {
+                bestMove = move;
+                ++bestMoveChanged;
+                std::cout << "Move: " << move.startSquare.x << "," << move.startSquare.y << " -> " << move.endSquare.x << "," << move.endSquare.y << " Eval: " << evaluation << std::endl;
+            }
         }
         game.undoLastMove(gameState, gameStateHistory);
     }

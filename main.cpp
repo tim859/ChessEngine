@@ -181,6 +181,8 @@ void processEngineMove() {
             }
             engineThinking = false;
 
+            std::cout << "engine move start square: (" << move->startSquare.x << ", " << move->startSquare.y << ")" << std::endl;
+            std::cout << "engine move end square: (" << move->endSquare.x << ", " << move->endSquare.y << ")" << std::endl;
             game.pickupPieceFromBoard(game.getCurrentGameState(), move->startSquare);
             boardView.pickupPieceFromBoard(move->startSquare, game.generateLegalMovesForSquare(game.getCurrentGameState(), move->startSquare));
 

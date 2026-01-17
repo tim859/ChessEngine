@@ -5,7 +5,8 @@
 
 class Engine {
     const std::map<Piece::Type, int> pieceValues = {{Piece::Type::PAWN, 100}, {Piece::Type::KNIGHT, 320}, {Piece::Type::BISHOP, 330}, {Piece::Type::ROOK, 500}, {Piece::Type::QUEEN, 900}, {Piece::Type::KING, 20000}};
-    Move* bestMove = nullptr;
+    Move bestMove = {};
+    int bestMoveChanged = 0;
 
 public:
     Move generateEngineMove(Game& game);
@@ -13,7 +14,7 @@ public:
 private:
     [[nodiscard]] int evaluateBoardPosition(const GameState& gameState) const;
     [[nodiscard]] int countMaterial(const GameState& gameState, Piece::Colour pieceColour) const;
-    int searchMoves(Game& game, GameState& gameState, std::vector<GameState>* gameStateHistory, int depth);
+    int searchMoves(Game& game, GameState& gameState, std::vector<GameState>* gameStateHistory, int depth, int initialDepth);
 };
 
 #endif //CHESS_ENGINE_H

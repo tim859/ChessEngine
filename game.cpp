@@ -134,6 +134,20 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const sf::Vect
     if (checkIsMoveLegal(gameState, Move(gameState.selectedPieceStartSquare.value(), endSquare))) {
         moveType = movePiece(gameState, Move(gameState.selectedPieceStartSquare.value(), endSquare), gameStateHistory);
     }
+
+    // check for stalemate and checkmate
+    if (generateAllLegalMoves(gameState).empty()) {
+        moveType = GameTypes::MoveType::GAMEOVER;
+        if (checkIsKingInCheck(gameState, gameState.moveColour)) {
+            if (gameState.moveColour == Piece::Colour::WHITE)
+                gameState.gameOverType = GameTypes::GameOverType::BLACKWINBYCHECKMATE;
+            else
+                gameState.gameOverType = GameTypes::GameOverType::WHITEWINBYCHECKMATE;
+        }
+        else
+            gameState.gameOverType = GameTypes::GameOverType::STALEMATE;
+    }
+
     gameState.selectedPieceStartSquare = std::nullopt;
     gameState.selectedPiece = std::nullopt;
     return moveType;
@@ -264,19 +278,6 @@ GameTypes::MoveType Game::movePiece(GameState& gameState, const Move move, std::
             moveType = GameTypes::MoveType::GAMEOVER;
             gameState.gameOverType = GameTypes::GameOverType::FIFTYMOVEDRAW;
         }
-    }
-
-    // check for stalemate and checkmate
-    if (generateAllLegalMoves(gameState).empty()) {
-        moveType = GameTypes::MoveType::GAMEOVER;
-        if (checkIsKingInCheck(gameState, gameState.moveColour)) {
-            if (gameState.moveColour == Piece::Colour::WHITE)
-                gameState.gameOverType = GameTypes::GameOverType::BLACKWINBYCHECKMATE;
-            else
-                gameState.gameOverType = GameTypes::GameOverType::WHITEWINBYCHECKMATE;
-        }
-        else
-            gameState.gameOverType = GameTypes::GameOverType::STALEMATE;
     }
     return moveType;
 }

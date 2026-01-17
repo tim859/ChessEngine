@@ -48,8 +48,6 @@ struct Piece {
 struct Move {
     sf::Vector2<int> startSquare;
     sf::Vector2<int> endSquare;
-
-    Move(const sf::Vector2<int> newStartPosition, const sf::Vector2<int> newEndPosition) : startSquare(newStartPosition), endSquare(newEndPosition) {}
 };
 
 // TODO: replace as many instances of std::optional<> as possible with pointers or smart pointers, they're just better
