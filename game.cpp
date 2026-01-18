@@ -246,6 +246,9 @@ GameTypes::MoveType Game::movePiece(GameState& gameState, const Move move, std::
         moveType = GameTypes::MoveType::PROMOTEPAWN;
     }
 
+    if (checkIsKingInCheck(gameState, gameState.moveColour))
+        moveType = GameTypes::MoveType::CHECK;
+
     if (gameStateHistory) {
         // check for how many times this gamestate (specifically board position) has appeared, if it is 3 or more then the game is drawn by threefold repetition
         auto gameStateFrequency = 0;
@@ -668,8 +671,6 @@ bool Game::checkIsKingInCheck(const GameState& gameState, const Piece::Colour ki
             }
         }
     }
-    // should never happen during a normal game but if somehow a king wasn't found on the board
-    std::cerr << "no king was found on the board of this colour!" << std::endl;
     return false;
 }
 
