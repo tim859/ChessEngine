@@ -121,7 +121,7 @@ bool Game::pickupPieceFromBoard(GameState& gameState, const sf::Vector2<int> sta
     return true;
 }
 
-GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const sf::Vector2<int> endSquare, std::vector<GameState>* gameStateHistory) const {
+GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const sf::Vector2<int> endSquare, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const {
     auto moveType = GameTypes::MoveType::NONE;
 
     // ensure the piece and the piece start square will be valid for all the functions that need them and get called from this function
@@ -132,9 +132,10 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const sf::Vect
 
     // determine if piece can move to this square and move it if so
     if (checkIsMoveLegal(gameState, Move(gameState.selectedPieceStartSquare.value(), endSquare))) {
-        moveType = movePiece(gameState, Move(gameState.selectedPieceStartSquare.value(), endSquare), gameStateHistory);
+        moveType = movePiece(gameState, Move(gameState.selectedPieceStartSquare.value(), endSquare), gameStateHistory, pawnPromotionChoice);
     }
 
+    // TODO: need to find a way to put this check back in movePiece without triggering a stack overflow, otherwise it wont know if the game is over when it is
     // check for stalemate and checkmate
     if (generateAllLegalMoves(gameState).empty()) {
         moveType = GameTypes::MoveType::GAMEOVER;
@@ -151,16 +152,6 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const sf::Vect
     gameState.selectedPieceStartSquare = std::nullopt;
     gameState.selectedPiece = std::nullopt;
     return moveType;
-}
-
-void Game::promotePawn(GameState& gameState, const Piece::Type pieceType) const {
-    if (!gameState.pawnPendingPromotionSquare || !gameState.pawnPendingPromotionColour)
-        return;
-    if (!gameState.boardPosition[gameState.pawnPendingPromotionSquare.value().y][gameState.pawnPendingPromotionSquare.value().x])
-        return;
-    gameState.boardPosition[gameState.pawnPendingPromotionSquare.value().y][gameState.pawnPendingPromotionSquare.value().x] = Piece(pieceType, gameState.pawnPendingPromotionColour.value());
-    gameState.pawnPendingPromotionSquare = std::nullopt;
-    gameState.pawnPendingPromotionColour = std::nullopt;
 }
 
 std::vector<Move> Game::generateAllLegalMoves(const GameState &gameState) const {
@@ -189,7 +180,7 @@ std::vector<Move> Game::generateAllLegalMoves(const GameState &gameState) const 
     return legalMoves;
 }
 
-GameTypes::MoveType Game::movePiece(GameState& gameState, const Move move, std::vector<GameState>* gameStateHistory) const {
+GameTypes::MoveType Game::movePiece(GameState& gameState, const Move move, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const {
     auto moveType = GameTypes::MoveType::NONE;
     const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
 
@@ -250,9 +241,9 @@ GameTypes::MoveType Game::movePiece(GameState& gameState, const Move move, std::
         ++gameState.fullMoveCounter;
 
     // check to see if a pawn has reached the other side and can be promoted
-    if (checkForPawnPromotion(gameState)) {
-        gameState.pawnPendingPromotionSquare = move.endSquare;
-        gameState.pawnPendingPromotionColour = gameState.moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE;
+    if (checkForPawnPromotionOnLastMove(gameState) && pawnPromotionChoice) {
+        gameState.boardPosition[move.endSquare.y][move.endSquare.x] = *pawnPromotionChoice;
+        moveType = GameTypes::MoveType::PROMOTEPAWN;
     }
 
     if (gameStateHistory) {
@@ -406,7 +397,7 @@ bool Game::checkIsMoveLegal(const GameState& gameState, const Move move) const {
 
     // simulate the board position if the move was to be made
     auto simulatedGameState = gameState;
-    movePiece(simulatedGameState, move, nullptr);
+    movePiece(simulatedGameState, move, nullptr, nullptr);
 
     // disallow moves that would leave the king in check
     if (checkIsKingInCheck(simulatedGameState, gameState.moveColour))
@@ -682,7 +673,7 @@ bool Game::checkIsKingInCheck(const GameState& gameState, const Piece::Colour ki
     return false;
 }
 
-bool Game::checkForPawnPromotion(const GameState &gameState) const {
+bool Game::checkForPawnPromotionOnLastMove(const GameState &gameState) const {
     for (auto rank = 0; rank < 8; rank += 7) {
         for (auto file = 0; file < 8; ++file) {
             if (gameState.boardPosition[rank][file]) {
@@ -693,4 +684,10 @@ bool Game::checkForPawnPromotion(const GameState &gameState) const {
         }
     }
     return false;
+}
+
+bool Game::checkForPawnPromotionOnNextMove(GameState gameState, const Move move) const {
+    // the piece type doesn't matter, we're just testing if this move will result in a pawn being promoted
+    const auto piece = Piece(Piece::Type::QUEEN, gameState.moveColour);
+    return movePiece(gameState, move, nullptr, &piece) == GameTypes::MoveType::PROMOTEPAWN;
 }

@@ -69,9 +69,6 @@ struct GameState {
     // {black queenside, black kingside}
     std::array<bool, 2> blackCastleRights = {true, true};
     std::optional<sf::Vector2<int>> enPassantSquare;
-    //std::optional<sf::Vector2<int>> enPassantPawnSquare;
-    std::optional<sf::Vector2<int>> pawnPendingPromotionSquare;
-    std::optional<Piece::Colour> pawnPendingPromotionColour;
     GameTypes::GameOverType gameOverType = GameTypes::GameOverType::CONTINUE;
 
     bool operator==(const GameState& other) const {
@@ -114,8 +111,6 @@ public:
     [[nodiscard]] std::array<std::array<std::optional<Piece>, 8>, 8> getCurrentBoardPosition() const {return currentGameState.boardPosition;}
     [[nodiscard]] std::optional<sf::Vector2<int>> getCurrentSelectedPieceStartSquare() const {return currentGameState.selectedPieceStartSquare;}
     [[nodiscard]] std::optional<Piece> getCurrentSelectedPiece() const {return currentGameState.selectedPiece;}
-    [[nodiscard]] std::optional<sf::Vector2<int>> getCurrentPawnPendingPromotionSquare() const {return currentGameState.pawnPendingPromotionSquare;}
-    [[nodiscard]] std::optional<Piece::Colour> getCurrentPawnPendingPromotionColour() const {return currentGameState.pawnPendingPromotionColour;}
     [[nodiscard]] GameTypes::GameOverType getCurrentGameOverType() const {return currentGameState.gameOverType;}
     [[nodiscard]] std::vector<sf::Vector2<int>> generateLegalMovesForSquare(const GameState& gameState, sf::Vector2<int> startSquare) const;
 
@@ -124,10 +119,9 @@ public:
     void populateCurrentGameStateWithFen(const std::string& fen);
     // TODO: remove pickupPieceFromBoard and placePieceOnBoard, all the logic they contained has been moved to movePiece and they now do almost nothing
     bool pickupPieceFromBoard(GameState& gameState, sf::Vector2<int> startSquare) const;
-    GameTypes::MoveType placePieceOnBoard(GameState& gameState, sf::Vector2<int> endSquare, std::vector<GameState>* gameStateHistory) const;
-    void promotePawn(GameState& gameState, Piece::Type pieceType) const;
+    GameTypes::MoveType placePieceOnBoard(GameState& gameState, sf::Vector2<int> endSquare, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const;
     [[nodiscard]] std::vector<Move> generateAllLegalMoves(const GameState& gameState) const;
-    GameTypes::MoveType movePiece(GameState& gameState, Move move, std::vector<GameState>* gameStateHistory) const;
+    GameTypes::MoveType movePiece(GameState& gameState, Move move, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const;
     void undoLastMove(GameState& gameState, std::vector<GameState>* gameStateHistory);
     void updateCastlingRights(GameState& gameState, Move move) const;
     void castleRook(GameState& gameState, int rook) const;
@@ -144,7 +138,8 @@ public:
     [[nodiscard]] bool checkForEnPassantTake(const GameState& gameState, Move move) const;
     [[nodiscard]] bool checkIsSquareUnderAttack(const GameState& gameState, sf::Vector2<int> square, Piece::Colour enemyColour) const;
     [[nodiscard]] bool checkIsKingInCheck(const GameState& gameState, Piece::Colour kingColour) const;
-    [[nodiscard]] bool checkForPawnPromotion(const GameState& gameState) const;
+    [[nodiscard]] bool checkForPawnPromotionOnLastMove(const GameState& gameState) const;
+    [[nodiscard]] bool checkForPawnPromotionOnNextMove(GameState gameState, Move move) const;
 };
 
 #endif //CHESS_GAME_H

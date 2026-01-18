@@ -8,9 +8,8 @@ Move Engine::generateEngineMove(Game& game) {
     auto simulatedGameState = game.getCurrentGameState();
     auto* simulatedGameStateHistory = new std::vector<GameState>{simulatedGameState};
     bestMove = game.generateAllLegalMoves(simulatedGameState).front();
-    searchMoves(game, simulatedGameState, simulatedGameStateHistory, 4, 4);
-    if (bestMoveChanged == 0)
-        std::cout << "a better move was never found" << std::endl;
+    alphaBetaSearch(game, simulatedGameState, simulatedGameStateHistory, minusInfinity, infinity, 5, 5);
+    std::cout << "moves searched: " << movesSearched << std::endl;
     return bestMove;
 }
 
@@ -20,7 +19,6 @@ int Engine::evaluateBoardPosition(const GameState& gameState) const {
     //std::cout << "evaluation: " << evaluation << std::endl;
     return evaluation * perspective;
 }
-
 
 int Engine::countMaterial(const GameState& gameState, const Piece::Colour pieceColour) const {
     auto material = 0;
@@ -36,31 +34,40 @@ int Engine::countMaterial(const GameState& gameState, const Piece::Colour pieceC
     return material;
 }
 
-int Engine::searchMoves(Game& game, GameState& gameState, std::vector<GameState>* gameStateHistory, const int depth, const int initialDepth) {
-    if (depth == 0)
-        return evaluateBoardPosition(gameState);
+int Engine::alphaBetaSearch(Game& game, GameState& gameState, std::vector<GameState>* gameStateHistory, int alpha, int beta, int depthLeft, const int initalDepth) {
+    if (depthLeft == 0)
+        // TODO: implement quiescent function
+            return evaluateBoardPosition(gameState);
 
-    auto moves = game.generateAllLegalMoves(gameState);
+    const auto moves = game.generateAllLegalMoves(gameState);
     if (moves.empty()) {
         if (game.checkIsKingInCheck(gameState, gameState.moveColour))
-            return std::numeric_limits<int>::lowest();
+            return minusInfinity;
         return 0;
     }
 
-    int bestEvaluation = std::numeric_limits<int>::lowest();
-
     for (const auto& move : moves) {
-        game.movePiece(gameState, move, gameStateHistory);
-        int evaluation = -searchMoves(game, gameState, gameStateHistory, depth - 1, initialDepth);
-        if (evaluation > bestEvaluation) {
-            bestEvaluation = evaluation;
-            if (depth == initialDepth) {
+        // engine will always promote a pawn to a queen for the time being
+        const auto pawnPromotionPiece = Piece(Piece::Type::QUEEN, gameState.moveColour);
+        game.movePiece(gameState, move, gameStateHistory, &pawnPromotionPiece);
+        const int evaluation = -alphaBetaSearch(game, gameState, gameStateHistory, -beta, -alpha, depthLeft - 1, initalDepth);
+        game.undoLastMove(gameState, gameStateHistory);
+        ++movesSearched;
+
+        if (evaluation >= beta)
+            return beta;
+
+        if (evaluation > alpha) {
+            alpha = evaluation;
+            if (depthLeft == initalDepth) {
                 bestMove = move;
-                ++bestMoveChanged;
-                std::cout << "Move: " << move.startSquare.x << "," << move.startSquare.y << " -> " << move.endSquare.x << "," << move.endSquare.y << " Eval: " << evaluation << std::endl;
+                std::cout << "Move: " << move.startSquare.x << "," << move.startSquare.y << " -> " << move.endSquare.x << "," << move.endSquare.y << " Evaluation: " << evaluation << std::endl;
             }
         }
-        game.undoLastMove(gameState, gameStateHistory);
     }
-    return bestEvaluation;
+    return alpha;
 }
+
+// bestMove = move;
+// ++bestMoveChanged;
+// std::cout << "Move: " << move.startSquare.x << "," << move.startSquare.y << " -> " << move.endSquare.x << "," << move.endSquare.y << " Evaluation: " << evaluation << std::endl;
