@@ -48,8 +48,6 @@ struct Piece {
 struct Move {
     sf::Vector2<int> startSquare;
     sf::Vector2<int> endSquare;
-
-    Move(const sf::Vector2<int> newStartPosition, const sf::Vector2<int> newEndPosition) : startSquare(newStartPosition), endSquare(newEndPosition) {}
 };
 
 // TODO: replace as many instances of std::optional<> as possible with pointers or smart pointers, they're just better
@@ -65,15 +63,12 @@ struct GameState {
     int fullMoveCounter = 0;
     int halfMoveCounter = 0;
     int halfMovesSinceLastActiveMove = 0;
+    int movesSinceEnPassant = 0;
     // {white queenside, white kingside}
     std::array<bool, 2> whiteCastleRights = {true, true};
     // {black queenside, black kingside}
     std::array<bool, 2> blackCastleRights = {true, true};
     std::optional<sf::Vector2<int>> enPassantSquare;
-    //std::optional<sf::Vector2<int>> enPassantPawnSquare;
-    int movesSinceEnPassant = 0;
-    std::optional<sf::Vector2<int>> pawnPendingPromotionSquare;
-    std::optional<Piece::Colour> pawnPendingPromotionColour;
     GameTypes::GameOverType gameOverType = GameTypes::GameOverType::CONTINUE;
 
     bool operator==(const GameState& other) const {
@@ -94,7 +89,9 @@ class Game {
     // -------------------- game state members
 
     GameState currentGameState;
-    std::map<GameState, int>* currentGameStateHistory;
+    // TODO: would probably be better and more efficient to just have a vector of gamestates and store their frequency of appearance internally in an int called gameStateFrequency or something
+    // TODO: this would make undoLastMove significantly more efficient
+    std::vector<GameState>* currentGameStateHistory;
 
     // -------------------- castling positions --------------------
 
@@ -110,27 +107,22 @@ public:
     // -------------------- getters --------------------
 
     [[nodiscard]] GameState& getCurrentGameState() {return currentGameState;}
-    [[nodiscard]] std::map<GameState, int>* getCurrentGameStateHistory() const {return currentGameStateHistory;}
+    [[nodiscard]] std::vector<GameState>* getCurrentGameStateHistory() const {return currentGameStateHistory;}
     [[nodiscard]] std::array<std::array<std::optional<Piece>, 8>, 8> getCurrentBoardPosition() const {return currentGameState.boardPosition;}
     [[nodiscard]] std::optional<sf::Vector2<int>> getCurrentSelectedPieceStartSquare() const {return currentGameState.selectedPieceStartSquare;}
     [[nodiscard]] std::optional<Piece> getCurrentSelectedPiece() const {return currentGameState.selectedPiece;}
-    [[nodiscard]] std::optional<sf::Vector2<int>> getCurrentPawnPendingPromotionSquare() const {return currentGameState.pawnPendingPromotionSquare;}
-    [[nodiscard]] std::optional<Piece::Colour> getCurrentPawnPendingPromotionColour() const {return currentGameState.pawnPendingPromotionColour;}
     [[nodiscard]] GameTypes::GameOverType getCurrentGameOverType() const {return currentGameState.gameOverType;}
     [[nodiscard]] std::vector<sf::Vector2<int>> generateLegalMovesForSquare(const GameState& gameState, sf::Vector2<int> startSquare) const;
 
-    // -------------------- public application functions (modify the game state) --------------------
+    // -------------------- application functions (modify the game state) --------------------
 
     void populateCurrentGameStateWithFen(const std::string& fen);
+    // TODO: remove pickupPieceFromBoard and placePieceOnBoard, all the logic they contained has been moved to movePiece and they now do almost nothing
     bool pickupPieceFromBoard(GameState& gameState, sf::Vector2<int> startSquare) const;
-    GameTypes::MoveType placePieceOnBoard(GameState& gameState, sf::Vector2<int> endSquare, std::map<GameState, int>*) const;
-    void promotePawn(GameState& gameState, Piece::Type pieceType) const;
+    GameTypes::MoveType placePieceOnBoard(GameState& gameState, sf::Vector2<int> endSquare, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const;
     [[nodiscard]] std::vector<Move> generateAllLegalMoves(const GameState& gameState) const;
-
-private:
-    // -------------------- private application functions (modify the game state) --------------------
-
-    GameTypes::MoveType movePiece(GameState& gameState, Move move) const;
+    GameTypes::MoveType movePiece(GameState& gameState, Move move, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const;
+    void undoLastMove(GameState& gameState, std::vector<GameState>* gameStateHistory);
     void updateCastlingRights(GameState& gameState, Move move) const;
     void castleRook(GameState& gameState, int rook) const;
 
@@ -146,7 +138,8 @@ private:
     [[nodiscard]] bool checkForEnPassantTake(const GameState& gameState, Move move) const;
     [[nodiscard]] bool checkIsSquareUnderAttack(const GameState& gameState, sf::Vector2<int> square, Piece::Colour enemyColour) const;
     [[nodiscard]] bool checkIsKingInCheck(const GameState& gameState, Piece::Colour kingColour) const;
-    [[nodiscard]] bool checkForPawnPromotion(const GameState& gameState) const;
+    [[nodiscard]] bool checkForPawnPromotionOnLastMove(const GameState& gameState) const;
+    [[nodiscard]] bool checkForPawnPromotionOnNextMove(GameState gameState, Move move) const;
 };
 
 #endif //CHESS_GAME_H
