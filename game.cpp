@@ -580,25 +580,11 @@ bool Game::checkForEnPassantTake(const GameState& gameState, const Move move) co
 
 bool Game::checkIsSquareUnderAttack(const GameState& gameState, const sf::Vector2<int> square, const Piece::Colour enemyColour) const {
     constexpr std::array pieceDirections = {sf::Vector2(1, 1), sf::Vector2(-1, -1), sf::Vector2(1, -1), sf::Vector2(-1, 1), sf::Vector2(1, 0), sf::Vector2(0, 1), sf::Vector2(-1, 0), sf::Vector2(0, -1)};
+
     // -------------------- check for pawn attack --------------------
 
-    // get forward step of friendly colour
-    int forwardStep = 1;
-    if (enemyColour == Piece::Colour::BLACK)
-        forwardStep = -1;
-    // check for enemy pawns on the two diagonally forward squares
-    if (const auto squareOne = sf::Vector2(square.x + 1, square.y + forwardStep); squareOne.x < 8 && squareOne.y >= 0 && squareOne.y < 8) {
-        if (gameState.boardPosition[squareOne.y][squareOne.x]) {
-            if (gameState.boardPosition[squareOne.y][squareOne.x]->colour == enemyColour && gameState.boardPosition[squareOne.y][squareOne.x]->type == Piece::Type::PAWN)
-                return true;
-        }
-    }
-    if (const auto squareTwo = sf::Vector2(square.x - 1, square.y + forwardStep); squareTwo.x >= 0 && squareTwo.y >= 0 && squareTwo.y < 8) {
-        if (gameState.boardPosition[squareTwo.y][squareTwo.x]) {
-            if (gameState.boardPosition[squareTwo.y][squareTwo.x]->colour == enemyColour && gameState.boardPosition[squareTwo.y][squareTwo.x]->type == Piece::Type::PAWN)
-                return true;
-        }
-    }
+    if (checkIsSquareUnderAttackByPawn(gameState, square, enemyColour))
+        return true;
 
     // -------------------- check for knight attack --------------------
 
@@ -653,6 +639,28 @@ bool Game::checkIsSquareUnderAttack(const GameState& gameState, const sf::Vector
                 break;
             }
             currentSquare += direction;
+        }
+    }
+    return false;
+}
+
+bool Game::checkIsSquareUnderAttackByPawn(const GameState &gameState, const sf::Vector2<int> square, const Piece::Colour enemyColour) const {
+    // get forward step of friendly colour
+    int forwardStep = 1;
+    if (enemyColour == Piece::Colour::BLACK)
+        forwardStep = -1;
+
+    // check for enemy pawns on the two diagonally forward squares
+    if (const auto squareOne = sf::Vector2(square.x + 1, square.y + forwardStep); squareOne.x < 8 && squareOne.y >= 0 && squareOne.y < 8) {
+        if (gameState.boardPosition[squareOne.y][squareOne.x]) {
+            if (gameState.boardPosition[squareOne.y][squareOne.x]->colour == enemyColour && gameState.boardPosition[squareOne.y][squareOne.x]->type == Piece::Type::PAWN)
+                return true;
+        }
+    }
+    if (const auto squareTwo = sf::Vector2(square.x - 1, square.y + forwardStep); squareTwo.x >= 0 && squareTwo.y >= 0 && squareTwo.y < 8) {
+        if (gameState.boardPosition[squareTwo.y][squareTwo.x]) {
+            if (gameState.boardPosition[squareTwo.y][squareTwo.x]->colour == enemyColour && gameState.boardPosition[squareTwo.y][squareTwo.x]->type == Piece::Type::PAWN)
+                return true;
         }
     }
     return false;

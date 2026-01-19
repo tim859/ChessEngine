@@ -48,6 +48,7 @@ struct Piece {
 struct Move {
     sf::Vector2<int> startSquare;
     sf::Vector2<int> endSquare;
+    int score = 0;
 };
 
 // TODO: replace as many instances of std::optional<> as possible with pointers or smart pointers, they're just better
@@ -137,6 +138,7 @@ public:
     [[nodiscard]] bool checkForPawnDoublePush(const GameState& gameState, Move move) const;
     [[nodiscard]] bool checkForEnPassantTake(const GameState& gameState, Move move) const;
     [[nodiscard]] bool checkIsSquareUnderAttack(const GameState& gameState, sf::Vector2<int> square, Piece::Colour enemyColour) const;
+    [[nodiscard]] bool checkIsSquareUnderAttackByPawn(const GameState& gameState, sf::Vector2<int> square, Piece::Colour enemyColour) const;
     [[nodiscard]] bool checkIsKingInCheck(const GameState& gameState, Piece::Colour kingColour) const;
     [[nodiscard]] bool checkForPawnPromotionOnLastMove(const GameState& gameState) const;
     [[nodiscard]] bool checkForPawnPromotionOnNextMove(GameState gameState, Move move) const;
