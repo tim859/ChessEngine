@@ -45,6 +45,9 @@ void processUserInput(const std::optional<sf::Event> &event) {
     if (game.getCurrentGameOverType() != GameTypes::GameOverType::CONTINUE || engineTurn)
         return;
 
+    if (const auto* mouseButtonMoved = event->getIf<sf::Event::MouseMoved>())
+        mousePosition = {mouseButtonMoved->position.x, mouseButtonMoved->position.y};
+
     if (const auto* mouseButtonPressed = event->getIf<sf::Event::MouseButtonPressed>())
     {
         if (mouseButtonPressed->button == sf::Mouse::Button::Left)
@@ -106,7 +109,6 @@ void processUserInput(const std::optional<sf::Event> &event) {
                 moveType = game.placePieceOnBoard(game.getCurrentGameState(), endSquare, game.getCurrentGameStateHistory(), nullptr);
                 boardView.placePieceOnBoard(moveType != GameTypes::MoveType::NONE, endSquare);
             }
-            // free memory to avoid memory leak
             delete pawnPromotionPiece;
             pawnPromotionPiece = nullptr;
             audio.playSoundOnMove(moveType);
@@ -115,9 +117,6 @@ void processUserInput(const std::optional<sf::Event> &event) {
                 engineTurn = true;
         }
     }
-
-    if (const auto* mouseButtonMoved = event->getIf<sf::Event::MouseMoved>())
-        mousePosition = {mouseButtonMoved->position.x, mouseButtonMoved->position.y};
 }
 
 void processEngineMove() {

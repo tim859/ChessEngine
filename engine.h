@@ -17,6 +17,7 @@ private:
     [[nodiscard]] int evaluateBoardPosition(const GameState& gameState) const;
     [[nodiscard]] int countMaterial(const GameState& gameState, Piece::Colour pieceColour) const;
     int alphaBetaSearch(Game& game, GameState& gameState, std::vector<GameState>* gameStateHistory, int alpha, int beta, int depthLeft, int initialDepth);
+    void orderMoves (const Game& game, const GameState& gameState, std::vector<Move>& moves) const;
 };
 
 #endif //CHESS_ENGINE_H
