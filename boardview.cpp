@@ -130,8 +130,8 @@ void BoardView::placePieceOnBoard(const bool pieceMoved, sf::Vector2<int> endSqu
 }
 
 sf::Vector2<int> BoardView::getSquare(const int mouseX, const int mouseY) const {
-    // calculation that computes the square of the board that the mouse cursor is over
-    return {static_cast<int>(floor(mouseX / squareSize)), static_cast<int>(floor(mouseY / squareSize))};
+    // compute the square of the board that the mouse cursor is over
+    return {std::clamp(static_cast<int>(floor(mouseX / squareSize)), 0, 7), std::clamp(static_cast<int>(floor(mouseY / squareSize)), 0, 7)};
 }
 
 const sf::Texture& BoardView::GetPieceTexture(const Piece piece) const {
