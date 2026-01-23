@@ -17,7 +17,7 @@ sf::RenderWindow window(sf::VideoMode({1200, 1200}), "Chess");
 const int squareSize = 150;
 bool waitingForPawnPromotionChoice = false;
 Piece* pawnPromotionPiece;
-sf::Vector2i pawnPromotionSquare;
+Vector2Int pawnPromotionSquare;
 
 auto engineTurn = false;
 auto engineThinking = false;
@@ -53,7 +53,7 @@ void processUserInput(const std::optional<sf::Event> &event) {
         if (mouseButtonPressed->button == sf::Mouse::Button::Left)
         {
             mousePosition = {mouseButtonPressed->position.x, mouseButtonPressed->position.y};
-            if (const sf::Vector2i startSquare = boardView.getSquare(mousePosition.x, mousePosition.y); game.pickupPieceFromBoard(game.getCurrentGameState(), startSquare))
+            if (const Vector2Int startSquare = boardView.getSquare(mousePosition.x, mousePosition.y); game.pickupPieceFromBoard(game.getCurrentGameState(), startSquare))
                 boardView.pickupPieceFromBoard(startSquare, game.generateLegalMovesForSquare(game.getCurrentGameState(), startSquare));
         }
     }
@@ -69,11 +69,11 @@ void processUserInput(const std::optional<sf::Event> &event) {
                 const float direction = game.getCurrentGameState().moveColour == Piece::Colour::WHITE ? 1 : -1;
                 if (boardView.getSquare(mousePosition.x, mousePosition.y) == pawnPromotionSquare)
                     pawnPromotionPiece = new Piece(Piece::Type::QUEEN, game.getCurrentGameState().moveColour);
-                if (boardView.getSquare(mousePosition.x, mousePosition.y) == sf::Vector2i(pawnPromotionSquare.x, pawnPromotionSquare.y + direction))
+                if (boardView.getSquare(mousePosition.x, mousePosition.y) == Vector2Int(pawnPromotionSquare.x, pawnPromotionSquare.y + direction))
                     pawnPromotionPiece = new Piece(Piece::Type::ROOK, game.getCurrentGameState().moveColour);
-                if (boardView.getSquare(mousePosition.x, mousePosition.y) == sf::Vector2i(pawnPromotionSquare.x, pawnPromotionSquare.y + (direction * 2)))
+                if (boardView.getSquare(mousePosition.x, mousePosition.y) == Vector2Int(pawnPromotionSquare.x, pawnPromotionSquare.y + (direction * 2)))
                     pawnPromotionPiece = new Piece(Piece::Type::KNIGHT, game.getCurrentGameState().moveColour);
-                if (boardView.getSquare(mousePosition.x, mousePosition.y) == sf::Vector2i(pawnPromotionSquare.x, pawnPromotionSquare.y + (direction * 3)))
+                if (boardView.getSquare(mousePosition.x, mousePosition.y) == Vector2Int(pawnPromotionSquare.x, pawnPromotionSquare.y + (direction * 3)))
                     pawnPromotionPiece = new Piece(Piece::Type::BISHOP, game.getCurrentGameState().moveColour);
 
                 // make sure pawnPromotionPiece is pointing to a valid piece, otherwise the player could click anywhere on the board, and it would still set waitingForPawnPromotionChoice to false
@@ -197,7 +197,7 @@ void drawWindow() {
         pawnPromotionOverlay.setPosition(static_cast<sf::Vector2f>(sf::Vector2(pawnPromotionSquare.x * squareSize, pawnPromotionOverlayY)));
         window.draw(pawnPromotionOverlay);
 
-        boardView.drawPawnPromotionPieces(window, game.getCurrentGameState().moveColour, static_cast<sf::Vector2f>(pawnPromotionSquare));
+        boardView.drawPawnPromotionPieces(window, game.getCurrentGameState().moveColour, pawnPromotionSquare);
     }
     if (game.getCurrentGameOverType() != GameTypes::GameOverType::CONTINUE) {
         switch (game.getCurrentGameOverType()) {
@@ -236,10 +236,10 @@ int main() {
     gameOverText.setPosition({squareSize * 2, squareSize * 3});
 
     // standard chess starting position fen string
-    game.populateCurrentGameStateWithFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w QKqk - 0 0");
+    game.populateGameStateWithFen(game.getCurrentGameState(), game.getCurrentGameStateHistory(), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w QKqk - 0 0");
 
     // testing pawn promotion fen string
-    // game.populateCurrentGameStateWithFen("8/PPPPPPPP/8/8/8/8/pppppppp/8 w - - 0 0");
+    // game.populateGameStateWithFen("8/PPPPPPPP/8/8/8/8/pppppppp/8 w - - 0 0");
 
     audio.playSoundOnStart();
 

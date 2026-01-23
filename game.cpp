@@ -8,21 +8,26 @@ Game::Game() {
     currentGameStateHistory = new std::vector<GameState>;
 }
 
-std::vector<sf::Vector2<int>> Game::generateLegalMovesForSquare(const GameState &gameState, const sf::Vector2<int> startSquare) const {
-    std::vector<sf::Vector2<int>> validMovableSquares;
+std::vector<Vector2Int> Game::generateLegalMovesForSquare(const GameState &gameState,  const Vector2Int startSquare) const {
+    std::vector<Vector2Int> validMovableSquares;
     for (int rank = 0; rank < 8; ++rank) {
         for (int file = 0; file < 8; ++file) {
-            if (const auto move = Move(startSquare, sf::Vector2(file, rank)); checkIsMoveLegal(gameState, move))
+            if (const auto move = Move(startSquare, Vector2Int(file, rank)); checkIsMoveLegal(gameState, move))
                 validMovableSquares.emplace_back(file, rank);
         }
     }
     return validMovableSquares;
 }
 
+void Game::reset() {
+    currentGameState.reset();
+    currentGameStateHistory->clear();
+}
+
 // contains very little validation, invalid/incomplete fen strings will cause exceptions and/or undefined behaviour
-void Game::populateCurrentGameStateWithFen(const std::string& fen) {
-    // TODO: pass in the gamestate so the function can be used on any gamestate instead of just the current one
-    // TODO: will need to reset/clear the passed in gamestate at the beginning of the function as well
+void Game::populateGameStateWithFen(GameState& gameState, std::vector<GameState>* gameStateHistory, const std::string& fen) const {
+    gameState.reset();
+    gameStateHistory->clear();
 
     // map that stores the symbols of fen notation that denote pieces and their corresponding pieces
     std::map<char, Piece::Type> pieceTypeFromSymbol = {{'k', Piece::Type::KING}, {'q', Piece::Type::QUEEN}, {'r', Piece::Type::ROOK},
@@ -40,7 +45,7 @@ void Game::populateCurrentGameStateWithFen(const std::string& fen) {
             column += (fen[i] - '0');
         else if (std::isalpha(fen[i])) {
             // use the fen letter to get the type, use the case of the fen letter to get the colour and then instantiate a new Piece object with those attributes at the corresponding square
-            currentGameState.boardPosition[row][column] = Piece(pieceTypeFromSymbol[std::tolower(fen[i])], std::isupper(fen[i]) ? Piece::Colour::WHITE : Piece::Colour::BLACK);
+            gameState.boardPosition[row][column] = Piece(pieceTypeFromSymbol[std::tolower(fen[i])], std::isupper(fen[i]) ? Piece::Colour::WHITE : Piece::Colour::BLACK);
             ++column;
         }
         else if (fen[i] == ' ') {
@@ -67,24 +72,24 @@ void Game::populateCurrentGameStateWithFen(const std::string& fen) {
 
     // parse the extracted fen information and apply it to the game state
     // 1: move colour
-    currentGameState.moveColour = fenInfo[0] == "w" ? Piece::Colour::WHITE : Piece::Colour::BLACK;
+    gameState.moveColour = fenInfo[0] == "w" ? Piece::Colour::WHITE : Piece::Colour::BLACK;
     // 2: castling rights
-    currentGameState.whiteCastleRights = {false, false};
-    currentGameState.blackCastleRights = {false, false};
+    gameState.whiteCastleRights = {false, false};
+    gameState.blackCastleRights = {false, false};
     if (fenInfo[1] != "-") {
         for (const auto& character : fenInfo[1]) {
             switch (character) {
                 case 'Q':
-                    currentGameState.whiteCastleRights[0] = true;
+                    gameState.whiteCastleRights[0] = true;
                     break;
                 case 'K':
-                    currentGameState.whiteCastleRights[1] = true;
+                    gameState.whiteCastleRights[1] = true;
                     break;
                 case 'q':
-                    currentGameState.blackCastleRights[0] = true;
+                    gameState.blackCastleRights[0] = true;
                     break;
                 case 'k':
-                    currentGameState.blackCastleRights[1] = true;
+                    gameState.blackCastleRights[1] = true;
                     break;
                 default:
                     std::cerr << "invalid character found in castling section of fen string" << std::endl;
@@ -94,17 +99,17 @@ void Game::populateCurrentGameStateWithFen(const std::string& fen) {
     // 3: enpassant square
     if (fenInfo[2] != "-") {
         // convert standard chess notation to programs zero indexed vector2 based way of storing piece positions e.g. e3 becomes (4, 5)
-        currentGameState.enPassantSquare = sf::Vector2(fenInfo[2][0] - 'a', 7 - (fenInfo[2][1] - '1'));
+        gameState.enPassantSquare = Vector2Int(fenInfo[2][0] - 'a', 7 - (fenInfo[2][1] - '1'));
     }
     // 4: half move counter
-    currentGameState.halfMoveCounter = std::stoi(fenInfo[3]);
+    gameState.halfMoveCounter = std::stoi(fenInfo[3]);
     // 5: full move counter
-    currentGameState.fullMoveCounter = std::stoi(fenInfo[4]);
+    gameState.fullMoveCounter = std::stoi(fenInfo[4]);
 
-    currentGameStateHistory->emplace_back(currentGameState);
+    gameStateHistory->emplace_back(gameState);
 }
 
-bool Game::pickupPieceFromBoard(GameState& gameState, const sf::Vector2<int> startSquare) const {
+bool Game::pickupPieceFromBoard(GameState& gameState, const Vector2Int startSquare) const {
     // check there is a piece at the start square
     if (!gameState.boardPosition[startSquare.y][startSquare.x])
         return false;
@@ -121,7 +126,7 @@ bool Game::pickupPieceFromBoard(GameState& gameState, const sf::Vector2<int> sta
     return true;
 }
 
-GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const sf::Vector2<int> endSquare, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const {
+GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2Int endSquare, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const {
     auto moveType = GameTypes::MoveType::NONE;
 
     // ensure the piece and the piece start square will be valid for all the functions that need them and get called from this function
@@ -164,7 +169,7 @@ std::vector<Move> Game::generateAllLegalMoves(const GameState &gameState) const 
                 if (gameState.boardPosition[startSquareRank][startSquareFile].value().colour == gameState.moveColour) {
                     for (auto endSquareRank = 0; endSquareRank < 8; ++endSquareRank) {
                         for (auto endSquareFile = 0; endSquareFile < 8; ++endSquareFile) {
-                            if (const auto move = Move(sf::Vector2(startSquareFile, startSquareRank), sf::Vector2(endSquareFile, endSquareRank)); checkIsMoveValid(gameState, move))
+                            if (const auto move = Move(Vector2Int(startSquareFile, startSquareRank), Vector2Int(endSquareFile, endSquareRank)); checkIsMoveValid(gameState, move))
                                 validMoves.emplace_back(move);
                         }
                     }
@@ -192,7 +197,7 @@ GameTypes::MoveType Game::movePiece(GameState& gameState, const Move move, std::
     // check for pawn double push and record the intermediate square it skipped over (enPassantSquare) and the square it is now on (enPassantPawnSquare)
     if (checkForPawnDoublePush(gameState, move)) {
         const int forwardStep = (movePiece.colour == Piece::Colour::WHITE) ? -1 : 1;
-        gameState.enPassantSquare = sf::Vector2(move.endSquare.x, move.endSquare.y - forwardStep);
+        gameState.enPassantSquare = Vector2Int(move.endSquare.x, move.endSquare.y - forwardStep);
         gameState.movesSinceEnPassant = 0;
     }
 
@@ -277,8 +282,8 @@ GameTypes::MoveType Game::movePiece(GameState& gameState, const Move move, std::
 }
 
 void Game::undoLastMove(GameState &gameState, std::vector<GameState>* gameStateHistory) {
-    if (gameStateHistory->empty()) {
-        std::cerr << "Cannot undo - no history" << std::endl;
+    if (gameStateHistory->size() < 2) {
+        std::cerr << "Cannot undo last move - no history" << std::endl;
         return;
     }
 
@@ -295,8 +300,8 @@ void Game::updateCastlingRights(GameState& gameState, const Move move) const {
     struct SideCastlingData {
         // [0]=queenside, [1]=kingside
         std::array<bool, 2>& castleRights;
-        sf::Vector2<int> queensideRookStartSquare;
-        sf::Vector2<int> kingsideRookStartSquare;
+        Vector2Int queensideRookStartSquare;
+        Vector2Int kingsideRookStartSquare;
         Piece::Colour pieceColour;
     };
 
@@ -335,8 +340,8 @@ void Game::updateCastlingRights(GameState& gameState, const Move move) const {
 // 1 = white queenside rook, 2 = white kingside rook, 3 = black queenside rook, 4 = black kingside rook
 void Game::castleRook(GameState& gameState, const int rook) const {
     struct CastleRookData {
-        sf::Vector2<int> startSquare;
-        sf::Vector2<int> endSquare;
+        Vector2Int startSquare;
+        Vector2Int endSquare;
         Piece::Colour rookColour;
     };
 
@@ -374,8 +379,8 @@ bool Game::checkIsMoveValid(const GameState& gameState, const Move move) const {
             return false;
     }
 
-    const sf::Vector2 moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
-    const auto absMoveVector = sf::Vector2(std::abs(moveVector.x), std::abs(moveVector.y));
+    const Vector2Int moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
+    const auto absMoveVector = Vector2Int(std::abs(moveVector.x), std::abs(moveVector.y));
 
     switch (movePiece.type) {
         case Piece::Type::QUEEN:
@@ -385,7 +390,7 @@ bool Game::checkIsMoveValid(const GameState& gameState, const Move move) const {
         case Piece::Type::BISHOP:
             return std::abs(moveVector.x) == std::abs(moveVector.y) ? checkIsMovePathClearForSliders(gameState, move) : false;
         case Piece::Type::KNIGHT:
-            return absMoveVector == sf::Vector2(2, 1) || absMoveVector == sf::Vector2(1, 2);
+            return absMoveVector == Vector2Int(2, 1) || absMoveVector == Vector2Int(1, 2);
         case Piece::Type::KING:
             return checkIsMoveValidForKing(gameState, move);
         case Piece::Type::PAWN:
@@ -409,12 +414,12 @@ bool Game::checkIsMoveLegal(const GameState& gameState, const Move move) const {
     // don't allow castling if the king is in check, or if it would move the king through squares under attack
     if (checkForCastle(gameState, move) > 0) {
         // get direction of move
-        sf::Vector2 stepVector = {1, 0};
+        Vector2Int stepVector = {1, 0};
         if (move.endSquare.x - move.startSquare.x < 0)
             stepVector.x = -1;
 
         // check none of the squares in between the startSquare (inclusive) and the endSquare are under attack
-        sf::Vector2<int> currentSquare = move.startSquare;
+        Vector2Int currentSquare = move.startSquare;
         while (currentSquare != move.endSquare) {
             if (checkIsSquareUnderAttack(gameState, currentSquare, gameState.moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE))
                 return false;
@@ -425,7 +430,7 @@ bool Game::checkIsMoveLegal(const GameState& gameState, const Move move) const {
 }
 
 bool Game::checkIsMovePathClearForSliders(const GameState& gameState, const Move move) const {
-    const sf::Vector2 moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
+    const Vector2Int moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
 
     // check to make sure the move makes geometric sense for sliding pieces
     // i.e. is the end piece legally reachable from the start piece horizontally, vertically or diagonally
@@ -434,7 +439,7 @@ bool Game::checkIsMovePathClearForSliders(const GameState& gameState, const Move
 
     // next we need to find out which one of the 8 possible directions that the move is going in. The direction of the vector can be computed by:
     // stepRow = sign(moveVector.y), stepColumn = sign(moveVector.x) where sign(x) is -1 if x < 0, 0 if x == 0, +1 if x > 0
-    sf::Vector2 stepVector = {0, 0};
+    Vector2Int stepVector = {0, 0};
     if (moveVector.x > 0)
         stepVector.x += 1;
     else if (moveVector.x < 0)
@@ -446,7 +451,7 @@ bool Game::checkIsMovePathClearForSliders(const GameState& gameState, const Move
         stepVector.y -= 1;
 
     // the step vector is then repeatedly added on from the start square until we reach the end square, if no piece is found while traversing then the move path is clear
-    sf::Vector2<int> currentSquare = move.startSquare + stepVector;
+    Vector2Int currentSquare = move.startSquare + stepVector;
     while (currentSquare != move.endSquare) {
         if (gameState.boardPosition[currentSquare.y][currentSquare.x])
             return false;
@@ -456,10 +461,10 @@ bool Game::checkIsMovePathClearForSliders(const GameState& gameState, const Move
 }
 
 bool Game::checkIsMoveValidForKing(const GameState& gameState, const Move move) const {
-    const sf::Vector2 moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
+    const Vector2Int moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
 
     // normal king move
-    if (const auto absMoveVector = sf::Vector2(std::abs(moveVector.x), std::abs(moveVector.y)); std::max(absMoveVector.x, absMoveVector.y) == 1)
+    if (const auto absMoveVector = Vector2Int(std::abs(moveVector.x), std::abs(moveVector.y)); std::max(absMoveVector.x, absMoveVector.y) == 1)
         return true;
 
     // castling
@@ -469,12 +474,12 @@ bool Game::checkIsMoveValidForKing(const GameState& gameState, const Move move) 
 int Game::checkForCastle(const GameState& gameState, const Move move) const {
     const bool isWhite = gameState.moveColour == Piece::Colour::WHITE;
     const auto& castleRights = isWhite ? gameState.whiteCastleRights : gameState.blackCastleRights;
-    const sf::Vector2 kingStartSquare = isWhite ? whiteKingStartSquare : blackKingStartSquare;
+    const Vector2Int kingStartSquare = isWhite ? whiteKingStartSquare : blackKingStartSquare;
     const int startRow = isWhite ? 7 : 0;
 
     struct CastleOption {
         int rightsIndex{};
-        sf::Vector2<int> kingTarget;
+        Vector2Int kingTarget;
         int rookIndex{};
     };
 
@@ -503,7 +508,7 @@ bool Game::checkIsMoveValidForPawn(const GameState& gameState, const Move move) 
     if (!gameState.boardPosition[move.startSquare.y][move.startSquare.x])
         return false;
     const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
-    const sf::Vector2 moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
+    const Vector2Int moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
 
     if (moveVector.y == 0 || std::abs(moveVector.x) > 1 || std::abs(moveVector.y) > 2)
         return false;
@@ -543,7 +548,7 @@ bool Game::checkIsMoveValidForPawn(const GameState& gameState, const Move move) 
 }
 
 bool Game::checkForPawnDoublePush(const GameState& gameState, const Move move) const {
-    const sf::Vector2 moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
+    const Vector2Int moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
     int forwardStep = 1;
     int startingRow = 1;
     bool enemyOnEndSquare = false;
@@ -565,7 +570,7 @@ bool Game::checkForEnPassantTake(const GameState& gameState, const Move move) co
         return false;
 
     const auto enemyForwardStep = gameState.moveColour == Piece::Colour::WHITE ? 1 : -1;
-    const auto enPassantPawnSquare = sf::Vector2(gameState.enPassantSquare.value().x, gameState.enPassantSquare.value().y + enemyForwardStep);
+    const auto enPassantPawnSquare = Vector2Int(gameState.enPassantSquare.value().x, gameState.enPassantSquare.value().y + enemyForwardStep);
     // check that the pawn is trying to move to the enpassant square and then check that the pawn is directly next to the enpassant pawn (the pawn that just moved 2 spaces last turn)
     if (move.endSquare == gameState.enPassantSquare && std::abs(move.startSquare.x - enPassantPawnSquare.x) == 1 && move.startSquare.y == enPassantPawnSquare.y) {
         // check to make sure the enpassant pawn square does have a piece on it
@@ -578,8 +583,8 @@ bool Game::checkForEnPassantTake(const GameState& gameState, const Move move) co
     return false;
 }
 
-bool Game::checkIsSquareUnderAttack(const GameState& gameState, const sf::Vector2<int> square, const Piece::Colour enemyColour) const {
-    constexpr std::array pieceDirections = {sf::Vector2(1, 1), sf::Vector2(-1, -1), sf::Vector2(1, -1), sf::Vector2(-1, 1), sf::Vector2(1, 0), sf::Vector2(0, 1), sf::Vector2(-1, 0), sf::Vector2(0, -1)};
+bool Game::checkIsSquareUnderAttack(const GameState& gameState, const Vector2Int square, const Piece::Colour enemyColour) const {
+    constexpr std::array pieceDirections = {Vector2Int(1, 1), Vector2Int(-1, -1), Vector2Int(1, -1), Vector2Int(-1, 1), Vector2Int(1, 0), Vector2Int(0, 1), Vector2Int(-1, 0), Vector2Int(0, -1)};
 
     // -------------------- check for pawn attack --------------------
 
@@ -588,7 +593,7 @@ bool Game::checkIsSquareUnderAttack(const GameState& gameState, const sf::Vector
 
     // -------------------- check for knight attack --------------------
 
-    constexpr std::array knightVectors = {sf::Vector2(2, 1), sf::Vector2(-2, -1), sf::Vector2(2, -1), sf::Vector2(-2, 1), sf::Vector2(1, 2), sf::Vector2(-1, -2), sf::Vector2(1, -2), sf::Vector2(-1, 2)};
+    constexpr std::array knightVectors = {Vector2Int(2, 1), Vector2Int(-2, -1), Vector2Int(2, -1), Vector2Int(-2, 1), Vector2Int(1, 2), Vector2Int(-1, -2), Vector2Int(1, -2), Vector2Int(-1, 2)};
     for (const auto& vector : knightVectors) {
         const auto& possibleKnightSquare = square + vector;
         // make sure the square being checked is on the board
@@ -644,20 +649,20 @@ bool Game::checkIsSquareUnderAttack(const GameState& gameState, const sf::Vector
     return false;
 }
 
-bool Game::checkIsSquareUnderAttackByPawn(const GameState &gameState, const sf::Vector2<int> square, const Piece::Colour enemyColour) const {
+bool Game::checkIsSquareUnderAttackByPawn(const GameState &gameState, const Vector2Int square, const Piece::Colour enemyColour) const {
     // get forward step of friendly colour
     int forwardStep = 1;
     if (enemyColour == Piece::Colour::BLACK)
         forwardStep = -1;
 
     // check for enemy pawns on the two diagonally forward squares
-    if (const auto squareOne = sf::Vector2(square.x + 1, square.y + forwardStep); squareOne.x < 8 && squareOne.y >= 0 && squareOne.y < 8) {
+    if (const auto squareOne = Vector2Int(square.x + 1, square.y + forwardStep); squareOne.x < 8 && squareOne.y >= 0 && squareOne.y < 8) {
         if (gameState.boardPosition[squareOne.y][squareOne.x]) {
             if (gameState.boardPosition[squareOne.y][squareOne.x]->colour == enemyColour && gameState.boardPosition[squareOne.y][squareOne.x]->type == Piece::Type::PAWN)
                 return true;
         }
     }
-    if (const auto squareTwo = sf::Vector2(square.x - 1, square.y + forwardStep); squareTwo.x >= 0 && squareTwo.y >= 0 && squareTwo.y < 8) {
+    if (const auto squareTwo = Vector2Int(square.x - 1, square.y + forwardStep); squareTwo.x >= 0 && squareTwo.y >= 0 && squareTwo.y < 8) {
         if (gameState.boardPosition[squareTwo.y][squareTwo.x]) {
             if (gameState.boardPosition[squareTwo.y][squareTwo.x]->colour == enemyColour && gameState.boardPosition[squareTwo.y][squareTwo.x]->type == Piece::Type::PAWN)
                 return true;
@@ -674,7 +679,7 @@ bool Game::checkIsKingInCheck(const GameState& gameState, const Piece::Colour ki
                 if (gameState.boardPosition[rank][file]->colour == kingColour && gameState.boardPosition[rank][file]->type == Piece::Type::KING) {
                     // check whether the king is currently under attack
                     const auto enemyColour = kingColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE;
-                    return checkIsSquareUnderAttack(gameState, sf::Vector2(file, rank), enemyColour);
+                    return checkIsSquareUnderAttack(gameState, Vector2Int(file, rank), enemyColour);
                 }
             }
         }
