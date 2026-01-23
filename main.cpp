@@ -236,10 +236,10 @@ int main() {
     gameOverText.setPosition({squareSize * 2, squareSize * 3});
 
     // standard chess starting position fen string
-    game.populateGameStateWithFen(game.getCurrentGameState(), game.getCurrentGameStateHistory(), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w QKqk - 0 0");
+    game.populateGameStateFromFEN(game.getCurrentGameState(), game.getCurrentGameStateHistory(), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w QKqk - 0 0");
 
     // testing pawn promotion fen string
-    // game.populateGameStateWithFen("8/PPPPPPPP/8/8/8/8/pppppppp/8 w - - 0 0");
+    // game.populateGameStateFromFEN("8/PPPPPPPP/8/8/8/8/pppppppp/8 w - - 0 0");
 
     audio.playSoundOnStart();
 

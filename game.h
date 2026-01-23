@@ -142,31 +142,31 @@ public:
     // -------------------- application functions (modify the game state) --------------------
 
     void reset();
-    void populateGameStateWithFen(GameState& gameState, std::vector<GameState>* gameStateHistory, const std::string& fen) const;
+    void populateGameStateFromFEN(GameState& gameState, std::vector<GameState>* gameStateHistory, const std::string& fen) const;
     // TODO: remove pickupPieceFromBoard and placePieceOnBoard, all the logic they contained has been moved to movePiece and they now do almost nothing
     bool pickupPieceFromBoard(GameState& gameState, Vector2Int startSquare) const;
     GameTypes::MoveType placePieceOnBoard(GameState& gameState, Vector2Int endSquare, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const;
-    [[nodiscard]] std::vector<Move> generateAllLegalMoves(const GameState& gameState) const;
-    GameTypes::MoveType movePiece(GameState& gameState, Move move, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const;
-    void undoLastMove(GameState& gameState, std::vector<GameState>* gameStateHistory);
+    GameTypes::MoveType movePiece(GameState& gameState, const Move& move, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const;
+    void undoLastMove(GameState& gameState, std::vector<GameState>* gameStateHistory) const;
     void updateCastlingRights(GameState& gameState, Move move) const;
     void castleRook(GameState& gameState, int rook) const;
 
     // -------------------- validation functions (do not modify the game state) --------------------
 
-    [[nodiscard]] bool checkIsMoveValid(const GameState& gameState, Move move) const;
-    [[nodiscard]] bool checkIsMoveLegal(const GameState& gameState, Move move) const;
-    [[nodiscard]] bool checkIsMovePathClearForSliders(const GameState& gameState, Move move) const;
-    [[nodiscard]] bool checkIsMoveValidForKing(const GameState& gameState, Move move) const;
-    [[nodiscard]] int checkForCastle(const GameState& gameState, Move move) const;
-    [[nodiscard]] bool checkIsMoveValidForPawn(const GameState& gameState, Move move) const;
-    [[nodiscard]] bool checkForPawnDoublePush(const GameState& gameState, Move move) const;
-    [[nodiscard]] bool checkForEnPassantTake(const GameState& gameState, Move move) const;
+    [[nodiscard]] bool checkIsMoveValid(const GameState& gameState, const Move& move) const;
+    [[nodiscard]] bool checkIsMoveLegal(const GameState& gameState, const Move& move) const;
+    [[nodiscard]] bool checkIsMovePathClearForSliders(const GameState& gameState, const Move& move) const;
+    [[nodiscard]] bool checkIsMoveValidForKing(const GameState& gameState, const Move& move) const;
+    [[nodiscard]] int checkForCastle(const GameState& gameState, const Move& move) const;
+    [[nodiscard]] bool checkIsMoveValidForPawn(const GameState& gameState, const Move& move) const;
+    [[nodiscard]] bool checkForPawnDoublePush(const GameState& gameState, const Move& move) const;
+    [[nodiscard]] bool checkForEnPassantTake(const GameState& gameState, const Move &move) const;
     [[nodiscard]] bool checkIsSquareUnderAttack(const GameState& gameState, Vector2Int square, Piece::Colour enemyColour) const;
     [[nodiscard]] bool checkIsSquareUnderAttackByPawn(const GameState& gameState, Vector2Int square, Piece::Colour enemyColour) const;
     [[nodiscard]] bool checkIsKingInCheck(const GameState& gameState, Piece::Colour kingColour) const;
     [[nodiscard]] bool checkForPawnPromotionOnLastMove(const GameState& gameState) const;
-    [[nodiscard]] bool checkForPawnPromotionOnNextMove(GameState gameState, Move move) const;
+    [[nodiscard]] bool checkForPawnPromotionOnNextMove(GameState gameState, const Move& move) const;
+    [[nodiscard]] std::vector<Move> generateAllLegalMoves(const GameState& gameState) const;
 };
 
 #endif //CHESS_GAME_H

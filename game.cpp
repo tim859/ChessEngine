@@ -8,7 +8,7 @@ Game::Game() {
     currentGameStateHistory = new std::vector<GameState>;
 }
 
-std::vector<Vector2Int> Game::generateLegalMovesForSquare(const GameState &gameState,  const Vector2Int startSquare) const {
+std::vector<Vector2Int> Game::generateLegalMovesForSquare(const GameState& gameState,  const Vector2Int startSquare) const {
     std::vector<Vector2Int> validMovableSquares;
     for (int rank = 0; rank < 8; ++rank) {
         for (int file = 0; file < 8; ++file) {
@@ -24,89 +24,191 @@ void Game::reset() {
     currentGameStateHistory->clear();
 }
 
-// contains very little validation, invalid/incomplete fen strings will cause exceptions and/or undefined behaviour
-void Game::populateGameStateWithFen(GameState& gameState, std::vector<GameState>* gameStateHistory, const std::string& fen) const {
+void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>* gameStateHistory, const std::string& fen) const {
     gameState.reset();
-    gameStateHistory->clear();
 
-    // map that stores the symbols of fen notation that denote pieces and their corresponding pieces
-    std::map<char, Piece::Type> pieceTypeFromSymbol = {{'k', Piece::Type::KING}, {'q', Piece::Type::QUEEN}, {'r', Piece::Type::ROOK},
-        {'b', Piece::Type::BISHOP}, {'n', Piece::Type::KNIGHT}, {'p', Piece::Type::PAWN}};
+    // tokenise the fen string so the 6 pieces of information can be handled individually
+    std::vector<std::string> fenTokens;
+    std::string currentToken;
+    for (const auto& character : fen) {
+        if (character == ' ') {
+            if (!currentToken.empty()) {
+                fenTokens.push_back(currentToken);
+                currentToken.clear();
+            }
+        }
+        else
+            currentToken += character;
+    }
+    if (!currentToken.empty())
+        fenTokens.push_back(currentToken);
 
-    auto row = 0, column = 0, firstSpaceIndex = 0;
-    for (auto i = 0; i < fen.length(); ++i) {
-        // slash character means go to the next row and reset the column
-        if (fen[i] == '/') {
+    if (fenTokens.size() != 6) {
+        std::cerr << "FEN must have exactly 6 fields" << std::endl;
+        return;
+    }
+
+    // ---------- 1. board position ----------
+
+    auto row = 0, column = 0;
+    for (const auto& character : fenTokens[0]) {
+        if (row > 7 || column > 8) {
+            std::cerr << "FEN board position invalid" << std::endl;
+            return;
+        }
+
+        // required to avoid undefined behaviour with std::isdigit, std::isalpha, std::isupper, std::islower
+        const auto unsignedCharacter = static_cast<unsigned char>(character);
+        // slash means go to the next row and reset the column
+        if (character == '/') {
+            if (column != 8) {
+                std::cerr << "FEN board position invalid" << std::endl;
+                return;
+            }
             ++row;
             column = 0;
         }
-        // a digit means skip that amount of squares
-        else if (std::isdigit(fen[i]))
-            column += (fen[i] - '0');
-        else if (std::isalpha(fen[i])) {
-            // use the fen letter to get the type, use the case of the fen letter to get the colour and then instantiate a new Piece object with those attributes at the corresponding square
-            gameState.boardPosition[row][column] = Piece(pieceTypeFromSymbol[std::tolower(fen[i])], std::isupper(fen[i]) ? Piece::Colour::WHITE : Piece::Colour::BLACK);
+        // digit means skip that amount of squares
+        else if (std::isdigit(unsignedCharacter)) {
+            if (character - '0' < 1 || character - '0' > 8) {
+                std::cerr << "FEN board position contains invalid digit" << std::endl;
+                return;
+            }
+            column += character - '0';
+        }
+        // letter denotes type, case denotes colour
+        else if (std::isalpha(unsignedCharacter)) {
+            if (column > 7) {
+                std::cerr << "FEN board position invalid" << std::endl;
+                return;
+            }
+            const auto letter = static_cast<char>(std::tolower(unsignedCharacter));
+            Piece::Type pieceType;
+
+            switch (letter) {
+                case 'k': pieceType = Piece::Type::KING; break;
+                case 'q': pieceType = Piece::Type::QUEEN; break;
+                case 'r': pieceType = Piece::Type::ROOK; break;
+                case 'b': pieceType = Piece::Type::BISHOP; break;
+                case 'n': pieceType = Piece::Type::KNIGHT; break;
+                case 'p': pieceType = Piece::Type::PAWN; break;
+                default:
+                    std::cerr << "FEN board position contains invalid character" << std::endl;
+                    return;
+            }
+            gameState.boardPosition[row][column] = Piece(pieceType, std::isupper(unsignedCharacter) ? Piece::Colour::WHITE : Piece::Colour::BLACK);
             ++column;
         }
-        else if (fen[i] == ' ') {
-            firstSpaceIndex = i;
-            break;
+        else {
+            std::cerr << "FEN board position contains invalid character" << std::endl;
+            return;
         }
-        else
-            std::cerr << "fen string contains invalid character" << std::endl;
+    }
+    if (row != 7 || column != 8) {
+        std::cerr << "FEN board position invalid" << std::endl;
+        return;
     }
 
-    // get each of the 5 pieces of game state information that fen contains after the piece positions
-    std::array<std::string, 5> fenInfo;
-    auto fenIndex = firstSpaceIndex;
-    for (auto& i : fenInfo) {
-        // avoid putting the space in the string
-        ++fenIndex;
-        std::string gameStateInfo;
-        while (fenIndex < fen.length() && fen[fenIndex] != ' ') {
-            gameStateInfo += fen[fenIndex];
-            ++fenIndex;
-        }
-        i = gameStateInfo;
+    // ---------- 2. move colour ----------
+
+    if (fenTokens[1] == "w")
+        gameState.moveColour = Piece::Colour::WHITE;
+    else if (fenTokens[1] == "b")
+        gameState.moveColour = Piece::Colour::BLACK;
+    else {
+        std::cerr << "FEN move colour invalid" << std::endl;
+        return;
     }
 
-    // parse the extracted fen information and apply it to the game state
-    // 1: move colour
-    gameState.moveColour = fenInfo[0] == "w" ? Piece::Colour::WHITE : Piece::Colour::BLACK;
-    // 2: castling rights
-    gameState.whiteCastleRights = {false, false};
-    gameState.blackCastleRights = {false, false};
-    if (fenInfo[1] != "-") {
-        for (const auto& character : fenInfo[1]) {
+    // ---------- 3. castling rights ----------
+
+    if (fenTokens[2] != "-") {
+        for (const auto& character : fenTokens[2]) {
             switch (character) {
-                case 'Q':
-                    gameState.whiteCastleRights[0] = true;
-                    break;
-                case 'K':
-                    gameState.whiteCastleRights[1] = true;
-                    break;
-                case 'q':
-                    gameState.blackCastleRights[0] = true;
-                    break;
-                case 'k':
-                    gameState.blackCastleRights[1] = true;
-                    break;
+                case 'Q': gameState.whiteCastleRights[0] = true; break;
+                case 'K': gameState.whiteCastleRights[1] = true; break;
+                case 'q': gameState.blackCastleRights[0] = true; break;
+                case 'k': gameState.blackCastleRights[1] = true; break;
                 default:
-                    std::cerr << "invalid character found in castling section of fen string" << std::endl;
+                    std::cerr << "FEN castling rights invalid" << std::endl;
+                    return;
             }
         }
     }
-    // 3: enpassant square
-    if (fenInfo[2] != "-") {
-        // convert standard chess notation to programs zero indexed vector2 based way of storing piece positions e.g. e3 becomes (4, 5)
-        gameState.enPassantSquare = Vector2Int(fenInfo[2][0] - 'a', 7 - (fenInfo[2][1] - '1'));
-    }
-    // 4: half move counter
-    gameState.halfMoveCounter = std::stoi(fenInfo[3]);
-    // 5: full move counter
-    gameState.fullMoveCounter = std::stoi(fenInfo[4]);
 
-    gameStateHistory->emplace_back(gameState);
+    // ---------- 4. enpassant square ----------
+
+    if (fenTokens[3] != "-") {
+        // must be 2 characters exactly
+        if (fenTokens[3].length() != 2) {
+            std::cerr << "FEN enpassant square invalid" << std::endl;
+            return;
+        }
+        // first character must be a lowercase letter a to h
+        if (!std::islower(static_cast<unsigned char>(fenTokens[3][0])) || fenTokens[3][0] < 'a' || fenTokens[3][0] > 'h') {
+            std::cerr << "FEN enpassant square invalid" << std::endl;
+            return;
+        }
+        // second character must be 3 or 6
+        if (fenTokens[3][1] != '3' && fenTokens[3][1] != '6') {
+            std::cerr << "FEN enpassant square invalid" << std::endl;
+            return;
+        }
+
+        // convert standard chess notation to programs zero indexed vector2 based way of storing piece positions e.g. e3 becomes (4, 5)
+        gameState.enPassantSquare = Vector2Int(fenTokens[3][0] - 'a', 7 - (fenTokens[3][1] - '1'));
+    }
+
+    // ---------- 5. half move counter ----------
+
+    // std::stoi throws if the first character it parses is not a digit, so make sure it is before using std::stoi
+    if (!std::isdigit(static_cast<unsigned char>(fenTokens[4][0]))) {
+        std::cerr << "FEN half move count invalid" << std::endl;
+        return;
+    }
+    // pos will count the number of characters that std::stoi parses
+    size_t pos = 0;
+    int halfMoveCount;
+    try {
+        halfMoveCount = std::stoi(fenTokens[4], &pos);
+    }
+    catch (const std::out_of_range&) {
+        std::cerr << "FEN half move count too large" << std::endl;
+        return;
+    }
+    // if pos is the same as the number of characters in the token, then every character in the token was a digit
+    if (pos == fenTokens[4].length())
+        gameState.halfMoveCounter = halfMoveCount;
+    else {
+        std::cerr << "FEN half move count invalid" << std::endl;
+        return;
+    }
+
+    // ---------- 6. full move counter ----------
+
+    // same strategy as 5.
+    if (!std::isdigit(static_cast<unsigned char>(fenTokens[5][0]))) {
+        std::cerr << "FEN full move count invalid" << std::endl;
+        return;
+    }
+    pos = 0;
+    int fullMoveCount;
+    try {
+        fullMoveCount = std::stoi(fenTokens[5], &pos);
+    }
+    catch (const std::out_of_range&) {
+        std::cerr << "FEN full move count too large" << std::endl;
+        return;
+    }
+    if (pos == fenTokens[5].length())
+        gameState.fullMoveCounter = fullMoveCount;
+    else {
+        std::cerr << "FEN full move count invalid" << std::endl;
+        return;
+    }
+
+    if (gameStateHistory)
+        gameStateHistory->emplace_back(gameState);
 }
 
 bool Game::pickupPieceFromBoard(GameState& gameState, const Vector2Int startSquare) const {
@@ -159,33 +261,7 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2I
     return moveType;
 }
 
-std::vector<Move> Game::generateAllLegalMoves(const GameState &gameState) const {
-    // generate all possible pseudo legal moves first then filter by actual legal moves
-    // this reduces computation as unnecessarily simulating game states is more expensive than unnecessarily checking for pseudo legal moves
-    std::vector<Move> validMoves;
-    for (auto startSquareRank = 0; startSquareRank < 8; ++startSquareRank) {
-        for (auto startSquareFile = 0; startSquareFile < 8; ++startSquareFile) {
-            if (gameState.boardPosition[startSquareRank][startSquareFile].has_value()) {
-                if (gameState.boardPosition[startSquareRank][startSquareFile].value().colour == gameState.moveColour) {
-                    for (auto endSquareRank = 0; endSquareRank < 8; ++endSquareRank) {
-                        for (auto endSquareFile = 0; endSquareFile < 8; ++endSquareFile) {
-                            if (const auto move = Move(Vector2Int(startSquareFile, startSquareRank), Vector2Int(endSquareFile, endSquareRank)); checkIsMoveValid(gameState, move))
-                                validMoves.emplace_back(move);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    std::vector<Move> legalMoves;
-    for (const auto& move : validMoves) {
-        if (checkIsMoveLegal(gameState, move))
-            legalMoves.emplace_back(move);
-    }
-    return legalMoves;
-}
-
-GameTypes::MoveType Game::movePiece(GameState& gameState, const Move move, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const {
+GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const {
     auto moveType = GameTypes::MoveType::NONE;
     const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
 
@@ -281,7 +357,7 @@ GameTypes::MoveType Game::movePiece(GameState& gameState, const Move move, std::
     return moveType;
 }
 
-void Game::undoLastMove(GameState &gameState, std::vector<GameState>* gameStateHistory) {
+void Game::undoLastMove(GameState& gameState, std::vector<GameState>* gameStateHistory) const {
     if (gameStateHistory->size() < 2) {
         std::cerr << "Cannot undo last move - no history" << std::endl;
         return;
@@ -361,7 +437,7 @@ void Game::castleRook(GameState& gameState, const int rook) const {
     gameState.boardPosition[castleRookData.endSquare.y][castleRookData.endSquare.x] = Piece(Piece::Type::ROOK, castleRookData.rookColour);
 }
 
-bool Game::checkIsMoveValid(const GameState& gameState, const Move move) const {
+bool Game::checkIsMoveValid(const GameState& gameState, const Move& move) const {
     // universal checks carried out for all pieces
 
     // make sure start square contains a piece
@@ -399,7 +475,7 @@ bool Game::checkIsMoveValid(const GameState& gameState, const Move move) const {
     return false;
 }
 
-bool Game::checkIsMoveLegal(const GameState& gameState, const Move move) const {
+bool Game::checkIsMoveLegal(const GameState& gameState, const Move& move) const {
     if (!checkIsMoveValid(gameState, move))
         return false;
 
@@ -429,7 +505,7 @@ bool Game::checkIsMoveLegal(const GameState& gameState, const Move move) const {
     return true;
 }
 
-bool Game::checkIsMovePathClearForSliders(const GameState& gameState, const Move move) const {
+bool Game::checkIsMovePathClearForSliders(const GameState& gameState, const Move& move) const {
     const Vector2Int moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
 
     // check to make sure the move makes geometric sense for sliding pieces
@@ -460,7 +536,7 @@ bool Game::checkIsMovePathClearForSliders(const GameState& gameState, const Move
     return true;
 }
 
-bool Game::checkIsMoveValidForKing(const GameState& gameState, const Move move) const {
+bool Game::checkIsMoveValidForKing(const GameState& gameState, const Move& move) const {
     const Vector2Int moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
 
     // normal king move
@@ -471,7 +547,7 @@ bool Game::checkIsMoveValidForKing(const GameState& gameState, const Move move) 
     return checkForCastle(gameState, move) > 0;
 }
 
-int Game::checkForCastle(const GameState& gameState, const Move move) const {
+int Game::checkForCastle(const GameState& gameState, const Move& move) const {
     const bool isWhite = gameState.moveColour == Piece::Colour::WHITE;
     const auto& castleRights = isWhite ? gameState.whiteCastleRights : gameState.blackCastleRights;
     const Vector2Int kingStartSquare = isWhite ? whiteKingStartSquare : blackKingStartSquare;
@@ -504,7 +580,7 @@ int Game::checkForCastle(const GameState& gameState, const Move move) const {
     return 0;
 }
 
-bool Game::checkIsMoveValidForPawn(const GameState& gameState, const Move move) const {
+bool Game::checkIsMoveValidForPawn(const GameState& gameState, const Move& move) const {
     if (!gameState.boardPosition[move.startSquare.y][move.startSquare.x])
         return false;
     const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
@@ -547,7 +623,7 @@ bool Game::checkIsMoveValidForPawn(const GameState& gameState, const Move move) 
     return false;
 }
 
-bool Game::checkForPawnDoublePush(const GameState& gameState, const Move move) const {
+bool Game::checkForPawnDoublePush(const GameState& gameState, const Move& move) const {
     const Vector2Int moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
     int forwardStep = 1;
     int startingRow = 1;
@@ -565,7 +641,7 @@ bool Game::checkForPawnDoublePush(const GameState& gameState, const Move move) c
     return moveVector.x == 0 && moveVector.y == (forwardStep * 2) && move.startSquare.y == startingRow && !enemyOnEndSquare && checkIsMovePathClearForSliders(gameState, move);
 }
 
-bool Game::checkForEnPassantTake(const GameState& gameState, const Move move) const {
+bool Game::checkForEnPassantTake(const GameState& gameState, const Move& move) const {
     if (!gameState.enPassantSquare)
         return false;
 
@@ -649,7 +725,7 @@ bool Game::checkIsSquareUnderAttack(const GameState& gameState, const Vector2Int
     return false;
 }
 
-bool Game::checkIsSquareUnderAttackByPawn(const GameState &gameState, const Vector2Int square, const Piece::Colour enemyColour) const {
+bool Game::checkIsSquareUnderAttackByPawn(const GameState& gameState, const Vector2Int square, const Piece::Colour enemyColour) const {
     // get forward step of friendly colour
     int forwardStep = 1;
     if (enemyColour == Piece::Colour::BLACK)
@@ -687,7 +763,7 @@ bool Game::checkIsKingInCheck(const GameState& gameState, const Piece::Colour ki
     return false;
 }
 
-bool Game::checkForPawnPromotionOnLastMove(const GameState &gameState) const {
+bool Game::checkForPawnPromotionOnLastMove(const GameState& gameState) const {
     for (auto rank = 0; rank < 8; rank += 7) {
         for (auto file = 0; file < 8; ++file) {
             if (gameState.boardPosition[rank][file]) {
@@ -700,8 +776,34 @@ bool Game::checkForPawnPromotionOnLastMove(const GameState &gameState) const {
     return false;
 }
 
-bool Game::checkForPawnPromotionOnNextMove(GameState gameState, const Move move) const {
+bool Game::checkForPawnPromotionOnNextMove(GameState gameState, const Move& move) const {
     // the piece type doesn't matter, we're just testing if this move will result in a pawn being promoted
     const auto piece = Piece(Piece::Type::QUEEN, gameState.moveColour);
     return movePiece(gameState, move, nullptr, &piece) == GameTypes::MoveType::PROMOTEPAWN;
+}
+
+std::vector<Move> Game::generateAllLegalMoves(const GameState& gameState) const {
+    // generate all possible pseudo legal moves first then filter by actual legal moves
+    // this reduces computation as unnecessarily simulating game states is more expensive than unnecessarily checking for pseudo legal moves
+    std::vector<Move> validMoves;
+    for (auto startSquareRank = 0; startSquareRank < 8; ++startSquareRank) {
+        for (auto startSquareFile = 0; startSquareFile < 8; ++startSquareFile) {
+            if (gameState.boardPosition[startSquareRank][startSquareFile].has_value()) {
+                if (gameState.boardPosition[startSquareRank][startSquareFile].value().colour == gameState.moveColour) {
+                    for (auto endSquareRank = 0; endSquareRank < 8; ++endSquareRank) {
+                        for (auto endSquareFile = 0; endSquareFile < 8; ++endSquareFile) {
+                            if (const auto move = Move(Vector2Int(startSquareFile, startSquareRank), Vector2Int(endSquareFile, endSquareRank)); checkIsMoveValid(gameState, move))
+                                validMoves.emplace_back(move);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::vector<Move> legalMoves;
+    for (const auto& move : validMoves) {
+        if (checkIsMoveLegal(gameState, move))
+            legalMoves.emplace_back(move);
+    }
+    return legalMoves;
 }
