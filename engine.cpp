@@ -3,6 +3,10 @@
 #include <thread>
 #include <iostream>
 
+void Engine::reset() {
+
+}
+
 Move Engine::generateEngineMove(Game& game) {
     // call searchMoves with a simulated gamestate that mirrors the current gamestate
     auto simulatedGameState = game.getCurrentGameState();
