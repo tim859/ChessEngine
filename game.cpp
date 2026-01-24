@@ -228,7 +228,7 @@ bool Game::pickupPieceFromBoard(GameState& gameState, const Vector2Int startSqua
     return true;
 }
 
-GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2Int endSquare, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const {
+GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2Int endSquare, std::vector<GameState>* gameStateHistory, Piece* pawnPromotionChoice) const {
     auto moveType = GameTypes::MoveType::NONE;
 
     // ensure the piece and the piece start square will be valid for all the functions that need them and get called from this function
@@ -261,7 +261,7 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2I
     return moveType;
 }
 
-GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const {
+GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std::vector<GameState>* gameStateHistory, Piece* pawnPromotionChoice) const {
     auto moveType = GameTypes::MoveType::NONE;
     const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
 
@@ -776,10 +776,13 @@ bool Game::checkForPawnPromotionOnLastMove(const GameState& gameState) const {
     return false;
 }
 
-bool Game::checkForPawnPromotionOnNextMove(GameState gameState, const Move& move) const {
-    // the piece type doesn't matter, we're just testing if this move will result in a pawn being promoted
-    const auto piece = Piece(Piece::Type::QUEEN, gameState.moveColour);
-    return movePiece(gameState, move, nullptr, &piece) == GameTypes::MoveType::PROMOTEPAWN;
+bool Game::checkForPawnPromotionOnNextMove(const GameState& gameState, const Move& move) const {
+    const auto& piece = gameState.boardPosition[move.startSquare.y][move.startSquare.x];
+    if (piece->type != Piece::Type::PAWN)
+        return false;
+    if (piece->colour == Piece::Colour::WHITE)
+        return move.endSquare.y == 0;
+    return move.endSquare.y == 7;
 }
 
 std::vector<Move> Game::generateAllLegalMoves(const GameState& gameState) const {
