@@ -24,7 +24,7 @@ void Game::reset() {
     currentGameStateHistory->clear();
 }
 
-void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>* gameStateHistory, const std::string& fen) const {
+bool Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>* gameStateHistory, const std::string& fen) const {
     gameState.reset();
 
     // tokenise the fen string so the 6 pieces of information can be handled individually
@@ -45,7 +45,7 @@ void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
 
     if (fenTokens.size() != 6) {
         std::cerr << "FEN must have exactly 6 fields" << std::endl;
-        return;
+        return false;
     }
 
     // ---------- 1. board position ----------
@@ -54,7 +54,7 @@ void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
     for (const auto& character : fenTokens[0]) {
         if (row > 7 || column > 8) {
             std::cerr << "FEN board position invalid" << std::endl;
-            return;
+            return false;
         }
 
         // required to avoid undefined behaviour with std::isdigit, std::isalpha, std::isupper, std::islower
@@ -63,7 +63,7 @@ void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
         if (character == '/') {
             if (column != 8) {
                 std::cerr << "FEN board position invalid" << std::endl;
-                return;
+                return false;
             }
             ++row;
             column = 0;
@@ -72,7 +72,7 @@ void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
         else if (std::isdigit(unsignedCharacter)) {
             if (character - '0' < 1 || character - '0' > 8) {
                 std::cerr << "FEN board position contains invalid digit" << std::endl;
-                return;
+                return false;
             }
             column += character - '0';
         }
@@ -80,7 +80,7 @@ void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
         else if (std::isalpha(unsignedCharacter)) {
             if (column > 7) {
                 std::cerr << "FEN board position invalid" << std::endl;
-                return;
+                return false;
             }
             const auto letter = static_cast<char>(std::tolower(unsignedCharacter));
             Piece::Type pieceType;
@@ -94,19 +94,19 @@ void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
                 case 'p': pieceType = Piece::Type::PAWN; break;
                 default:
                     std::cerr << "FEN board position contains invalid character" << std::endl;
-                    return;
+                    return false;
             }
             gameState.boardPosition[row][column] = Piece(pieceType, std::isupper(unsignedCharacter) ? Piece::Colour::WHITE : Piece::Colour::BLACK);
             ++column;
         }
         else {
             std::cerr << "FEN board position contains invalid character" << std::endl;
-            return;
+            return false;
         }
     }
     if (row != 7 || column != 8) {
         std::cerr << "FEN board position invalid" << std::endl;
-        return;
+        return false;
     }
 
     // ---------- 2. move colour ----------
@@ -117,7 +117,7 @@ void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
         gameState.moveColour = Piece::Colour::BLACK;
     else {
         std::cerr << "FEN move colour invalid" << std::endl;
-        return;
+        return false;
     }
 
     // ---------- 3. castling rights ----------
@@ -131,7 +131,7 @@ void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
                 case 'k': gameState.blackCastleRights[1] = true; break;
                 default:
                     std::cerr << "FEN castling rights invalid" << std::endl;
-                    return;
+                    return false;
             }
         }
     }
@@ -142,17 +142,17 @@ void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
         // must be 2 characters exactly
         if (fenTokens[3].length() != 2) {
             std::cerr << "FEN enpassant square invalid" << std::endl;
-            return;
+            return false;
         }
         // first character must be a lowercase letter a to h
         if (!std::islower(static_cast<unsigned char>(fenTokens[3][0])) || fenTokens[3][0] < 'a' || fenTokens[3][0] > 'h') {
             std::cerr << "FEN enpassant square invalid" << std::endl;
-            return;
+            return false;
         }
         // second character must be 3 or 6
         if (fenTokens[3][1] != '3' && fenTokens[3][1] != '6') {
             std::cerr << "FEN enpassant square invalid" << std::endl;
-            return;
+            return false;
         }
 
         // convert standard chess notation to programs zero indexed vector2 based way of storing piece positions e.g. e3 becomes (4, 5)
@@ -164,7 +164,7 @@ void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
     // std::stoi throws if the first character it parses is not a digit, so make sure it is before using std::stoi
     if (!std::isdigit(static_cast<unsigned char>(fenTokens[4][0]))) {
         std::cerr << "FEN half move count invalid" << std::endl;
-        return;
+        return false;
     }
     // pos will count the number of characters that std::stoi parses
     size_t pos = 0;
@@ -174,14 +174,14 @@ void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
     }
     catch (const std::out_of_range&) {
         std::cerr << "FEN half move count too large" << std::endl;
-        return;
+        return false;
     }
     // if pos is the same as the number of characters in the token, then every character in the token was a digit
     if (pos == fenTokens[4].length())
         gameState.halfMoveCounter = halfMoveCount;
     else {
         std::cerr << "FEN half move count invalid" << std::endl;
-        return;
+        return false;
     }
 
     // ---------- 6. full move counter ----------
@@ -189,7 +189,7 @@ void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
     // same strategy as 5.
     if (!std::isdigit(static_cast<unsigned char>(fenTokens[5][0]))) {
         std::cerr << "FEN full move count invalid" << std::endl;
-        return;
+        return false;
     }
     pos = 0;
     int fullMoveCount;
@@ -198,17 +198,18 @@ void Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
     }
     catch (const std::out_of_range&) {
         std::cerr << "FEN full move count too large" << std::endl;
-        return;
+        return false;
     }
     if (pos == fenTokens[5].length())
         gameState.fullMoveCounter = fullMoveCount;
     else {
         std::cerr << "FEN full move count invalid" << std::endl;
-        return;
+        return false;
     }
 
     if (gameStateHistory)
         gameStateHistory->emplace_back(gameState);
+    return true;
 }
 
 bool Game::pickupPieceFromBoard(GameState& gameState, const Vector2Int startSquare) const {
@@ -228,7 +229,7 @@ bool Game::pickupPieceFromBoard(GameState& gameState, const Vector2Int startSqua
     return true;
 }
 
-GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2Int endSquare, std::vector<GameState>* gameStateHistory, Piece* pawnPromotionChoice) const {
+GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2Int endSquare, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const {
     auto moveType = GameTypes::MoveType::NONE;
 
     // ensure the piece and the piece start square will be valid for all the functions that need them and get called from this function
@@ -261,7 +262,7 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2I
     return moveType;
 }
 
-GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std::vector<GameState>* gameStateHistory, Piece* pawnPromotionChoice) const {
+GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const {
     auto moveType = GameTypes::MoveType::NONE;
     const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
 
