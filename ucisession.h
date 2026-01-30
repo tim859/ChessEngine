@@ -17,16 +17,31 @@ class UCISession {
     UCISettings uciSettings;
 
 public:
+    // ---------- validate uci commands ----------
+
+    [[nodiscard]] bool validateCmdDebug(const std::vector<std::string>& tokens) const;
+    [[nodiscard]] bool validateCmdSetOption(const std::vector<std::string>& tokens) const;
+    [[nodiscard]] bool validateCmdPosition(const std::vector<std::string>& tokens) const;
+    [[nodiscard]] bool validateCmdGo(const std::vector<std::string>& tokens) const;
+
+    // ---------- apply uci commands ----------
+
     void cmdUCI() const;
-    void cmdDebug(bool option);
+    void cmdDebug(const std::vector<std::string>& tokens);
     void cmdIsReady() const;
-    void cmdSetOption(const std::string& name) const;
-    void cmdSetOption(const std::string& name, const std::string& value) const;
+    void cmdSetOption(const std::vector<std::string>& tokens) const;
     void cmdUCINewGame();
-    void cmdPositionStartpos(const std::vector<std::string>& moves);
-    void cmdPositionFen(const std::string& fen , const std::vector<std::string>& moves);
+    void cmdPosition(const std::vector<std::string>& tokens);
+    void cmdGo(const std::vector<std::string>& tokens);
+
+    // ---------- helper functions ----------
+
+    [[nodiscard]] std::string getLowercase(const std::string& string) const;
 
 private:
+    [[nodiscard]] std::string getCombinedTokens(const std::vector<std::string>& tokens, size_t startTokenIndex, size_t endTokenIndex) const;
+    [[nodiscard]] bool validateAlgebraicMove(const std::string& move) const;
+    bool stringToInt(const std::string& string, int& value) const;
     void applyMovesToGameState(const std::vector<std::string>& moves);
 };
 
