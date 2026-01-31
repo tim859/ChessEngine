@@ -20,8 +20,8 @@ bool UCISession::validateCmdSetOption(const std::vector<std::string> &tokens) co
         return false;
 
     // use tokens.size() as a null value
-    auto nameTokenIndex = tokens.size();
-    auto valueTokenIndex = tokens.size();
+    std::optional<size_t> nameTokenIndex;
+    std::optional<size_t> valueTokenIndex;
 
     // loop serves two purposes, ensure the keyword tokens are not duplicated and
     // find the indexes of the keyword tokens for further validation while ignoring garbage tokens that don't get in the way
@@ -29,100 +29,120 @@ bool UCISession::validateCmdSetOption(const std::vector<std::string> &tokens) co
         const auto lowercaseToken = getLowercase(tokens[i]);
         if (lowercaseToken == "name") {
             // ensure "name" token is not duplicated
-            if (nameTokenIndex != tokens.size())
+            if (nameTokenIndex)
                 return false;
             nameTokenIndex = i;
         }
         else if (lowercaseToken == "value") {
             // ensure "value" token is not duplicated
-            if (valueTokenIndex != tokens.size())
+            if (valueTokenIndex)
                 return false;
             valueTokenIndex = i;
         }
     }
 
     // ensure there is a "name" token
-    if (nameTokenIndex == tokens.size())
+    if (!nameTokenIndex)
         return false;
 
     // if there is a "value" token
-    if (valueTokenIndex != tokens.size()) {
+    if (valueTokenIndex) {
         // ensure "value" comes after "name", ensure there is at least one token between "name" and "value" and ensure "value" is not the last token
-        if (valueTokenIndex - nameTokenIndex < 2 || valueTokenIndex == tokens.size() - 1)
+        if (*valueTokenIndex - *nameTokenIndex < 2 || *valueTokenIndex == tokens.size() - 1)
             return false;
     }
     return true;
 }
 
-// "position [fen <fenstring> | startpos ]  moves <move1> .... <movei>"
+// "position [fen <fenstring> | startpos ] [moves <move1> .... <movei>]"
 bool UCISession::validateCmdPosition(const std::vector<std::string> &tokens) const {
     if (tokens.size() < 2)
         return false;
 
     // TODO: could use a map to reduce repeated code
 
-    auto startPosTokenIndex = tokens.size();
-    auto fenTokenIndex = tokens.size();
-    auto moveTokenIndex = tokens.size();
+    std::optional<size_t> startPosTokenIndex;
+    std::optional<size_t> fenTokenIndex;
+    std::optional<size_t> movesTokenIndex;
     for (size_t i = 1; i < tokens.size(); ++i) {
         const auto lowercaseToken = getLowercase(tokens[i]);
         if (lowercaseToken == "startpos") {
-            if (startPosTokenIndex != tokens.size())
+            if (startPosTokenIndex)
                 return false;
             startPosTokenIndex = i;
         }
         else if (lowercaseToken == "fen") {
-            if (fenTokenIndex != tokens.size())
+            if (fenTokenIndex)
                 return false;
             fenTokenIndex = i;
         }
         else if (lowercaseToken == "moves") {
-            if (moveTokenIndex != tokens.size())
+            if (movesTokenIndex)
                 return false;
-            moveTokenIndex = i;
+            movesTokenIndex = i;
         }
     }
 
-    // ensure either "startpos" or "fen" is found but not both
-    if (startPosTokenIndex == tokens.size() == (fenTokenIndex == tokens.size()))
+    // ensure either "startpos" or "fen" is found but not both and not neither (aka XOR startpos and fen)
+    if (startPosTokenIndex.has_value() == fenTokenIndex.has_value())
         return false;
 
-    if (fenTokenIndex != tokens.size()) {
-        if (tokens.size() < fenTokenIndex + 7)
+    std::string fen = uciSettings.startPosFen;
+    if (fenTokenIndex) {
+        if (tokens.size() < *fenTokenIndex + 7)
             return false;
 
         // extract the fen string
-        std::string fen;
-        for (size_t i = fenTokenIndex + 1; i < fenTokenIndex + 7; ++i)
+        fen = tokens[*fenTokenIndex + 1];
+        for (size_t i = *fenTokenIndex + 2; i < *fenTokenIndex + 7; ++i)
             fen += " " + tokens[i];
-
-        // validate fen string using validation in game.populateGameStateFromFEN
-        if (GameState emptyGameState; !game.populateGameStateFromFEN(emptyGameState, nullptr, fen))
-            return false;
     }
 
-    if (moveTokenIndex != tokens.size()) {
+    GameState testGameState;
+    // validate fen string using validation in game.populateGameStateFromFEN
+    if (!game.populateGameStateFromFEN(testGameState, nullptr, fen))
+        return false;
+
+    if (movesTokenIndex) {
         // ensure "moves" token is after "startpos" token if "startpos" was used
-        if (startPosTokenIndex != tokens.size()) {
-            if (moveTokenIndex < startPosTokenIndex)
+        if (startPosTokenIndex) {
+            if (*movesTokenIndex < *startPosTokenIndex)
                 return false;
         }
         // ensure "moves" token is after "fen" token and there are at least 6 tokens between them if "fen" was used
         else {
-            if (moveTokenIndex - fenTokenIndex < 7)
+            if (*movesTokenIndex - *fenTokenIndex < 7)
                 return false;
         }
 
-        // ensure "moves" is not the last token
-        if (moveTokenIndex == tokens.size() - 1)
+        // ensure "moves" is not the last token and therefore there is at least one possible move
+        if (*movesTokenIndex == tokens.size() - 1)
             return false;
 
-        // validate all moves
-        for (size_t i = moveTokenIndex + 1; i < tokens.size(); ++i) {
-            // TODO: this needs to validate the algebraic moves in the context of the fen position, simply checking for letters and digits is not enough
-            // it needs to reject illegal moves for that position as well
-            if (!validateAlgebraicMove(tokens[i]))
+        // validate all moves in the context of the board position
+        for (size_t i = *movesTokenIndex + 1; i < tokens.size(); ++i) {
+            if (!validateUCIMove(tokens[i]))
                 return false;
+
+            const auto move = Move(Vector2Int(tokens[i][0] - 'a', 7 - (tokens[i][1] - '1')), Vector2Int(tokens[i][2] - 'a', 7 - (tokens[i][3] - '1')));
+            if (!game.checkIsMoveLegal(testGameState, move))
+                return false;
+
+            const Piece* promotionPiece = nullptr;
+            if (tokens[i].length() == 5) {
+                switch (tokens[i][4]) {
+                    case 'q': promotionPiece = new Piece(Piece::Type::QUEEN, testGameState.moveColour); break;
+                    case 'r': promotionPiece = new Piece(Piece::Type::ROOK, testGameState.moveColour); break;
+                    case 'b': promotionPiece = new Piece(Piece::Type::BISHOP, testGameState.moveColour); break;
+                    case 'n': promotionPiece = new Piece(Piece::Type::KNIGHT, testGameState.moveColour); break;
+                }
+            }
+            // move the piece and ensure that a promotion piece is given if it is required
+            if (game.movePiece(testGameState, move, nullptr, promotionPiece) == GameTypes::MoveType::PROMOTEPAWN && promotionPiece == nullptr) {
+                delete promotionPiece;
+                return false;
+            }
+            delete promotionPiece;
         }
     }
     return true;
@@ -150,7 +170,7 @@ bool UCISession::validateCmdGo(const std::vector<std::string> &tokens) const {
             if (tokens[i] == "searchmoves") {
                 ++i;
                 while (!checkGoKeyword(tokens[i])) {
-                    if (!validateAlgebraicMove(tokens[i])) {
+                    if (!validateUCIMove(tokens[i])) {
                         std::cout << "invalid move in \"go searchmoves\" command" << std::endl;
                         return false;
                     }
@@ -197,25 +217,27 @@ void UCISession::cmdIsReady() const {
 }
 
 void UCISession::cmdSetOption(const std::vector<std::string>& tokens) const {
-    auto nameTokenIndex = tokens.size();
-    auto valueTokenIndex = tokens.size();
+    std::optional<size_t> nameTokenIndex;
+    std::optional<size_t> valueTokenIndex;
     for (size_t i = 1; i < tokens.size(); ++i) {
-        if (getLowercase(tokens[i]) == "name")
+        const auto lowercaseToken = getLowercase(tokens[i]);
+        if (lowercaseToken == "name")
             nameTokenIndex = i;
-        else if (getLowercase(tokens[i]) == "value")
+        else if (lowercaseToken == "value")
             valueTokenIndex = i;
     }
 
+    // "name" token is guaranteed to be found because of validation in validateCmdSetOption
     // if "value" token not found
-    if (valueTokenIndex == tokens.size()) {
-        const auto name = getCombinedTokens(tokens, nameTokenIndex, tokens.size());
+    if (!valueTokenIndex) {
+        const auto name = getCombinedTokens(tokens, *nameTokenIndex, tokens.size());
         // TODO: apply changes to options that just need a name here
         return;
     }
 
     // "value" token was found
-    const auto name = getCombinedTokens(tokens, nameTokenIndex, valueTokenIndex);
-    const auto value = getCombinedTokens(tokens, valueTokenIndex, tokens.size());
+    const auto name = getCombinedTokens(tokens, *nameTokenIndex, *valueTokenIndex);
+    const auto value = getCombinedTokens(tokens, *valueTokenIndex, tokens.size());
     // TODO: apply changes to options that need a name and a value here
 }
 
@@ -225,34 +247,37 @@ void UCISession::cmdUCINewGame() {
 }
 
 void UCISession::cmdPosition(const std::vector<std::string>& tokens) {
-    std::vector<std::string> moves;
-    if (getLowercase(tokens[1]) == "startpos") {
-        if (tokens.size() >= 4) {
-            for (size_t i = 3; i < tokens.size(); ++i) {
-                moves.push_back(tokens[i]);
-            }
+    std::optional<size_t> startPosTokenIndex;
+    std::optional<size_t> fenTokenIndex;
+    std::optional<size_t> movesTokenIndex;
+    for (size_t i = 1; i < tokens.size(); ++i) {
+        const auto lowercaseToken = getLowercase(tokens[i]);
+        if (lowercaseToken == "startpos") {
+            startPosTokenIndex = i;
         }
-        game.populateGameStateFromFEN(game.getCurrentGameState(), game.getCurrentGameStateHistory(), uciSettings.startPosFen);
-        if (!moves.empty())
-            applyMovesToGameState(moves);
+        else if (lowercaseToken == "fen") {
+            fenTokenIndex = i;
+        }
+        else if (lowercaseToken == "moves") {
+            movesTokenIndex = i;
+        }
     }
-    else if (getLowercase(tokens[1]) == "fen") {
-        // extract the fen string
-        std::string fen = tokens[2];
-        for (size_t i = 3; i < 8; ++i)
-            fen += " " + tokens[i];
 
-        if (tokens.size() >= 10) {
-            for (size_t i = 9; i < tokens.size(); ++i) {
-                moves.push_back(tokens[i]);
-            }
-        }
-        game.populateGameStateFromFEN(game.getCurrentGameState(), game.getCurrentGameStateHistory(), fen);
-        if (!moves.empty())
-            applyMovesToGameState(moves);
+    std::string fen = uciSettings.startPosFen;
+    if (fenTokenIndex) {
+        // extract the fen string
+        fen = tokens[*fenTokenIndex + 1];
+        for (size_t i = *fenTokenIndex + 2; i < *fenTokenIndex + 7; ++i)
+            fen += " " + tokens[i];
     }
-    else
-        std::cerr << "uciSession.validateCmdPosition() failed to properly validate position command" << std::endl;
+    game.populateGameStateFromFEN(game.getCurrentGameState(), game.getCurrentGameStateHistory(), fen);
+
+    std::vector<std::string> moves;
+    if (movesTokenIndex) {
+        for (size_t i = *movesTokenIndex + 1; i < tokens.size(); ++i)
+            moves.push_back(tokens[i]);
+    }
+    applyMovesToGameState(moves);
 }
 
 void UCISession::cmdGo(const std::vector<std::string> &tokens) {
@@ -277,7 +302,7 @@ std::string UCISession::getCombinedTokens(const std::vector<std::string> &tokens
     return token;
 }
 
-bool UCISession::validateAlgebraicMove(const std::string &move) const {
+bool UCISession::validateUCIMove(const std::string &move) const {
     // algebraic move must have a length of either 4 or 5 characters
     if (move.size() != 4 && move.size() != 5)
         return false;

@@ -52,7 +52,7 @@ int main() {
 
         else if (firstToken == "debug") {
             if (!uciSession.validateCmdDebug(tokens)) {
-                std::cout << R"("debug" command requires specifier of "on" or "off")" << std::endl;
+                std::cout << R"("debug" subcommand requires specifier of "on" or "off")" << std::endl;
                 continue;
             }
             uciSession.cmdDebug(tokens);
@@ -63,7 +63,7 @@ int main() {
 
         else if (firstToken == "setoption") {
             if (!uciSession.validateCmdSetOption(tokens)) {
-                std::cout << R"("setoption" requires: "setoption name <id> [value <x>]")" << std::endl;
+                std::cout << R"("setoption" subcommand requires: "setoption name <id> [value <x>]")" << std::endl;
                 continue;
             }
             uciSession.cmdSetOption(tokens);
@@ -77,8 +77,11 @@ int main() {
             uciSession.cmdUCINewGame();
 
         else if (firstToken == "position") {
-            if (uciSession.validateCmdPosition(tokens))
-                uciSession.cmdPosition(tokens);
+            if (!uciSession.validateCmdPosition(tokens)) {
+                std::cout << R"("position" subcommand requires: "position [startpos | fen <fenstring>] [moves <move1> .... <movei>]")" << std::endl;
+                continue;
+            }
+            uciSession.cmdPosition(tokens);
         }
 
         else if (firstToken == "go") {

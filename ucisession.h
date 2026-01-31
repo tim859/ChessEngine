@@ -40,8 +40,8 @@ public:
 
 private:
     [[nodiscard]] std::string getCombinedTokens(const std::vector<std::string>& tokens, size_t startTokenIndex, size_t endTokenIndex) const;
-    [[nodiscard]] bool validateAlgebraicMove(const std::string& move) const;
     bool stringToInt(const std::string& string, int& value) const;
+    [[nodiscard]] bool validateUCIMove(const std::string& move) const;
     void applyMovesToGameState(const std::vector<std::string>& moves);
 };
 
