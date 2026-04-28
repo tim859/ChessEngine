@@ -3,6 +3,13 @@
 #include "game.h"
 #include <map>
 
+struct EngineSearchSettings {
+    std::vector<Move> searchMoves;
+    bool ponder = false;
+    bool infinite = false;
+    std::optional<int> wtime, btime, winc, binc, movestogo, depth, nodes, mate, movetime;
+};
+
 class Engine {
     const std::map<Piece::Type, int> pieceValues = {{Piece::Type::PAWN, 100}, {Piece::Type::KNIGHT, 320}, {Piece::Type::BISHOP, 330}, {Piece::Type::ROOK, 500}, {Piece::Type::QUEEN, 900}, {Piece::Type::KING, 20000}};
     const int minusInfinity = -999999;
@@ -12,7 +19,7 @@ class Engine {
 
 public:
     void reset();
-    Move generateEngineMove(Game& game);
+    Move generateEngineMove(Game& game, const EngineSearchSettings& engineSearchSettings = {});
 
 private:
     [[nodiscard]] int evaluateBoardPosition(const GameState& gameState) const;

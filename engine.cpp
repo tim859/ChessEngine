@@ -7,7 +7,9 @@ void Engine::reset() {
 
 }
 
-Move Engine::generateEngineMove(Game& game) {
+Move Engine::generateEngineMove(Game& game, const EngineSearchSettings& engineSearchSettings) {
+    // TODO: implement all the engine search settings into the search
+    // TODO: allow the search to be cancelled early and return the best move found so far
     // call searchMoves with a simulated gamestate that mirrors the current gamestate
     auto simulatedGameState = game.getCurrentGameState();
     auto* simulatedGameStateHistory = new std::vector<GameState>{simulatedGameState};
@@ -42,7 +44,7 @@ int Engine::countMaterial(const GameState& gameState, const Piece::Colour pieceC
 int Engine::alphaBetaSearch(Game& game, GameState& gameState, std::vector<GameState>* gameStateHistory, int alpha, const int beta, const int depthLeft, const int initialDepth) {
     if (depthLeft == 0)
         // TODO: implement quiescent function
-            return evaluateBoardPosition(gameState);
+        return evaluateBoardPosition(gameState);
 
     auto moves = game.generateAllLegalMoves(gameState);
     if (moves.empty()) {
@@ -53,10 +55,10 @@ int Engine::alphaBetaSearch(Game& game, GameState& gameState, std::vector<GameSt
 
     orderMoves(game, gameState, moves);
 
-    for (const auto& move : moves) {
+    for (auto& move : moves) {
         // engine will always promote a pawn to a queen for the time being
-        const auto pawnPromotionPiece = Piece(Piece::Type::QUEEN, gameState.moveColour);
-        game.movePiece(gameState, move, gameStateHistory, &pawnPromotionPiece);
+        move.promotionPieceType = Piece::Type::QUEEN;
+        game.movePiece(gameState, move, gameStateHistory);
         const int evaluation = -alphaBetaSearch(game, gameState, gameStateHistory, -beta, -alpha, depthLeft - 1, initialDepth);
         game.undoLastMove(gameState, gameStateHistory);
         ++movesSearched;
