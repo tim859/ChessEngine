@@ -3,341 +3,98 @@
 #include <algorithm>
 #include <charconv>
 
-bool UCISession::validateCmdDebug(const std::vector<std::string>& tokens) const {
-    if (tokens.size() < 2)
-        return false;
-
-    for (size_t i = 1; i < tokens.size(); ++i) {
-        if (tokens[i] == "on" || tokens[i] == "false")
-            return true;
-    }
-    return false;
-}
-
-// "setoption name <id> [value <x>]"
-bool UCISession::validateCmdSetOption(const std::vector<std::string> &tokens) const {
-    if (tokens.size() < 3)
-        return false;
-
-    // use tokens.size() as a null value
-    std::optional<size_t> nameTokenIndex;
-    std::optional<size_t> valueTokenIndex;
-
-    // loop serves two purposes, ensure the keyword tokens are not duplicated and
-    // find the indexes of the keyword tokens for further validation while ignoring garbage tokens that don't get in the way
-    for (size_t i = 1; i < tokens.size(); ++i) {
-        const auto lowercaseToken = getLowercase(tokens[i]);
-        if (lowercaseToken == "name") {
-            // ensure "name" token is not duplicated
-            if (nameTokenIndex)
-                return false;
-            nameTokenIndex = i;
-        }
-        else if (lowercaseToken == "value") {
-            // ensure "value" token is not duplicated
-            if (valueTokenIndex)
-                return false;
-            valueTokenIndex = i;
-        }
-    }
-
-    // ensure there is a "name" token
-    if (!nameTokenIndex)
-        return false;
-
-    // if there is a "value" token
-    if (valueTokenIndex) {
-        // ensure "value" comes after "name", ensure there is at least one token between "name" and "value" and ensure "value" is not the last token
-        if (*valueTokenIndex - *nameTokenIndex < 2 || *valueTokenIndex == tokens.size() - 1)
-            return false;
-    }
-    return true;
-}
-
-// "position [fen <fenstring> | startpos ] [moves <move1> .... <movei>]"
-bool UCISession::validateCmdPosition(const std::vector<std::string> &tokens) const {
-    if (tokens.size() < 2)
-        return false;
-
-    // TODO: could use a map to reduce repeated code
-
-    std::optional<size_t> startPosTokenIndex;
-    std::optional<size_t> fenTokenIndex;
-    std::optional<size_t> movesTokenIndex;
-    for (size_t i = 1; i < tokens.size(); ++i) {
-        const auto lowercaseToken = getLowercase(tokens[i]);
-        if (lowercaseToken == "startpos") {
-            if (startPosTokenIndex)
-                return false;
-            startPosTokenIndex = i;
-        }
-        else if (lowercaseToken == "fen") {
-            if (fenTokenIndex)
-                return false;
-            fenTokenIndex = i;
-        }
-        else if (lowercaseToken == "moves") {
-            if (movesTokenIndex)
-                return false;
-            movesTokenIndex = i;
-        }
-    }
-
-    // ensure either "startpos" or "fen" is found but not both and not neither (aka XOR startpos and fen)
-    if (startPosTokenIndex.has_value() == fenTokenIndex.has_value())
-        return false;
-
-    std::string fen = uciSettings.startPosFen;
-    if (fenTokenIndex) {
-        if (tokens.size() < *fenTokenIndex + 7)
-            return false;
-
-        // extract the fen string
-        fen = tokens[*fenTokenIndex + 1];
-        for (size_t i = *fenTokenIndex + 2; i < *fenTokenIndex + 7; ++i)
-            fen += " " + tokens[i];
-    }
-
-    GameState testGameState;
-    // validate fen string using validation in game.populateGameStateFromFEN
-    if (!game.populateGameStateFromFEN(testGameState, nullptr, fen))
-        return false;
-
-    if (movesTokenIndex) {
-        // ensure "moves" token is after "startpos" token if "startpos" was used
-        if (startPosTokenIndex) {
-            if (*movesTokenIndex < *startPosTokenIndex)
-                return false;
-        }
-        // ensure "moves" token is after "fen" token and there are at least 6 tokens between them if "fen" was used
-        else {
-            if (*movesTokenIndex - *fenTokenIndex < 7)
-                return false;
-        }
-
-        // ensure "moves" is not the last token and therefore there is at least one possible move
-        if (*movesTokenIndex == tokens.size() - 1)
-            return false;
-
-        // validate all moves in the context of the board position
-        for (size_t i = *movesTokenIndex + 1; i < tokens.size(); ++i) {
-            if (!validateUCIMove(tokens[i]))
-                return false;
-
-            const auto move = Move(Vector2Int(tokens[i][0] - 'a', 7 - (tokens[i][1] - '1')), Vector2Int(tokens[i][2] - 'a', 7 - (tokens[i][3] - '1')));
-            if (!game.checkIsMoveLegal(testGameState, move))
-                return false;
-
-            const Piece* promotionPiece = nullptr;
-            if (tokens[i].length() == 5) {
-                switch (tokens[i][4]) {
-                    case 'q': promotionPiece = new Piece(Piece::Type::QUEEN, testGameState.moveColour); break;
-                    case 'r': promotionPiece = new Piece(Piece::Type::ROOK, testGameState.moveColour); break;
-                    case 'b': promotionPiece = new Piece(Piece::Type::BISHOP, testGameState.moveColour); break;
-                    case 'n': promotionPiece = new Piece(Piece::Type::KNIGHT, testGameState.moveColour); break;
-                }
-            }
-            // move the piece and ensure that a promotion piece is given if it is required
-            if (game.movePiece(testGameState, move, nullptr, promotionPiece) == GameTypes::MoveType::PROMOTEPAWN && promotionPiece == nullptr) {
-                delete promotionPiece;
-                return false;
-            }
-            delete promotionPiece;
-        }
-    }
-    return true;
-}
-
-// TODO: allow and remove unrecognised tokens instead of refusing to continue parsing
-bool UCISession::validateCmdGo(const std::vector<std::string> &tokens) const {
-    // allow "go" command by itself
-    if (tokens.size() == 1)
-        return true;
-
-    // helper lambda to check if a token is a keyword
-    const auto checkGoKeyword = [](const std::string& token) {
-        return token == "searchmoves" || token == "wtime"
-        || token == "btime" || token == "winc" || token =="binc"
-        || token == "movestogo" || token == "depth" || token == "nodes"
-        || token == "mate" || token == "movetime";
-    };
-
-    for (size_t i = 1; i < tokens.size(); ++i) {
-        if (tokens[i] == "ponder" || tokens[i] == "infinite")
-            continue;
-
-        if (checkGoKeyword(tokens[i])) {
-            if (tokens[i] == "searchmoves") {
-                ++i;
-                while (!checkGoKeyword(tokens[i])) {
-                    if (!validateUCIMove(tokens[i])) {
-                        std::cout << "invalid move in \"go searchmoves\" command" << std::endl;
-                        return false;
-                    }
-                    ++i;
-                }
-            }
-            else {
-                ++i;
-                if (int value; !stringToInt(tokens[i], value)) {
-                    std::cout << "invalid integer in \"go\" command" << std::endl;
-                    return false;
-                }
-            }
-        }
-        else {
-            std::cout << "invalid subcommand in \"go\" command" << std::endl;
-            return false;
-        }
-    }
-    return true;
-}
-
-void UCISession::cmdUCI() const {
+void UCISession::uci() const {
     std::cout << "id name " << uciSettings.name << std::endl;
     std::cout << "id author " << uciSettings.author << std::endl;
     std::cout << "uciok" << std::endl;
 }
 
-void UCISession::cmdDebug(const std::vector<std::string>& tokens) {
-    for (const auto& token : tokens) {
-        if (token == "on") {
-            uciSettings.debugMode = true;
-            return;
-        }
-        if (token == "off") {
-            uciSettings.debugMode = false;
-            return;
-        }
-    }
+void UCISession::debug(const bool debugCommand) {
+    if (debugCommand)
+        uciSettings.debugMode = true;
+    else
+        uciSettings.debugMode = false;
 }
 
-void UCISession::cmdIsReady() const {
+void UCISession::isReady() const {
     std::cout << "readyok" << std::endl;
 }
 
-void UCISession::cmdSetOption(const std::vector<std::string>& tokens) const {
-    std::optional<size_t> nameTokenIndex;
-    std::optional<size_t> valueTokenIndex;
-    for (size_t i = 1; i < tokens.size(); ++i) {
-        const auto lowercaseToken = getLowercase(tokens[i]);
-        if (lowercaseToken == "name")
-            nameTokenIndex = i;
-        else if (lowercaseToken == "value")
-            valueTokenIndex = i;
-    }
-
-    // "name" token is guaranteed to be found because of validation in validateCmdSetOption
-    // if "value" token not found
-    if (!valueTokenIndex) {
-        const auto name = getCombinedTokens(tokens, *nameTokenIndex, tokens.size());
-        // TODO: apply changes to options that just need a name here
-        return;
-    }
-
-    // "value" token was found
-    const auto name = getCombinedTokens(tokens, *nameTokenIndex, *valueTokenIndex);
-    const auto value = getCombinedTokens(tokens, *valueTokenIndex, tokens.size());
-    // TODO: apply changes to options that need a name and a value here
+bool UCISession::setOption(const SetOptionCommand& setOptionCommand) const {
+    return false;
 }
 
-void UCISession::cmdUCINewGame() {
+void UCISession::uciNewGame() {
     engine.reset();
     game.reset();
 }
 
-void UCISession::cmdPosition(const std::vector<std::string>& tokens) {
-    std::optional<size_t> startPosTokenIndex;
-    std::optional<size_t> fenTokenIndex;
-    std::optional<size_t> movesTokenIndex;
-    for (size_t i = 1; i < tokens.size(); ++i) {
-        const auto lowercaseToken = getLowercase(tokens[i]);
-        if (lowercaseToken == "startpos") {
-            startPosTokenIndex = i;
-        }
-        else if (lowercaseToken == "fen") {
-            fenTokenIndex = i;
-        }
-        else if (lowercaseToken == "moves") {
-            movesTokenIndex = i;
-        }
-    }
-
-    std::string fen = uciSettings.startPosFen;
-    if (fenTokenIndex) {
-        // extract the fen string
-        fen = tokens[*fenTokenIndex + 1];
-        for (size_t i = *fenTokenIndex + 2; i < *fenTokenIndex + 7; ++i)
-            fen += " " + tokens[i];
-    }
-    game.populateGameStateFromFEN(game.getCurrentGameState(), game.getCurrentGameStateHistory(), fen);
-
-    std::vector<std::string> moves;
-    if (movesTokenIndex) {
-        for (size_t i = *movesTokenIndex + 1; i < tokens.size(); ++i)
-            moves.push_back(tokens[i]);
-    }
-    applyMovesToGameState(moves);
-}
-
-void UCISession::cmdGo(const std::vector<std::string> &tokens) {
-}
-
-std::string UCISession::getLowercase(const std::string &string) const {
-    std::string lowercaseString;
-    for (const auto& character : string) {
-        lowercaseString += std::tolower(static_cast<unsigned char>(character));
-    }
-    return lowercaseString;
-}
-
-// get all tokens between startTokenIndex (exclusive) and endTokenIndex (exclusive) as one token/string
-std::string UCISession::getCombinedTokens(const std::vector<std::string> &tokens, const size_t startTokenIndex, const size_t endTokenIndex) const {
-    auto token = tokens[startTokenIndex];
-    auto i = startTokenIndex + 1;
-    while (i < endTokenIndex) {
-        token += " " + tokens[i];
-        ++i;
-    }
-    return token;
-}
-
-bool UCISession::validateUCIMove(const std::string &move) const {
-    // algebraic move must have a length of either 4 or 5 characters
-    if (move.size() != 4 && move.size() != 5)
+bool UCISession::position(const PositionCommand& positionCommand) {
+    if (!game.populateGameStateFromFEN(game.getCurrentGameState(), game.getCurrentGameStateHistory(), positionCommand.fen))
         return false;
 
-    // first character must be lowercase letter a to h, second character must be digit 1 to 8, third character must be lowercase letter a to h, fourth character must be digit 1 to 8
-    if (move[0] < 'a' || move[0] > 'h' || move[1] < '1' || move[1] > '8' || move[2] < 'a' || move[2] > 'h' || move[3] < '1' || move[3] > '8')
-        return false;
-
-    // if move has 5 characters then the fifth character must be lowercase letter q, r, b or n
-    if (move.size() == 5 && move[4] != 'q' && move[4] != 'r' && move[4] != 'b' && move[4] != 'n')
-        return false;
-
+    for (const auto& move : positionCommand.moves) {
+        if (!game.checkIsMoveLegal(game.getCurrentGameState(), move))
+            return false;
+        game.movePiece(game.getCurrentGameState(), move, game.getCurrentGameStateHistory());
+    }
     return true;
 }
 
-bool UCISession::stringToInt(const std::string &string, int &value) const {
-    std::from_chars_result result = std::from_chars(string.data(), string.data() + string.size(), value);
-    return result.ec == std::errc{} && result.ptr == string.data() + string.size();
+void UCISession::go(const GoCommand& goCommand) {
+    stop();
+    const Game gameSnapshot = game;
+    const EngineSearchSettings& engineSearchSettings = goCommand;
+
+    engineThread = std::jthread([this, gameSnapshot, engineSearchSettings](const std::stop_token& stopToken) {
+        Move move = engine.generateEngineMove(gameSnapshot, engineSearchSettings, stopToken);
+        std::scoped_lock lock(engineMoveMutex);
+        pendingEngineMove = move;
+    });
 }
 
-void UCISession::applyMovesToGameState(const std::vector<std::string>& moves) {
-    for (const auto& algebraicMove : moves) {
-        // convert the chess move to the internal Vector2 based move system
-        const auto move = Move(Vector2Int(algebraicMove[0] - 'a', 7 - (algebraicMove[1] - '1')), Vector2Int(algebraicMove[2] - 'a', 7 - (algebraicMove[3] - '1')));
-
-        const Piece* promotionPiece = nullptr;
-        if (algebraicMove.length() == 5) {
-            switch (algebraicMove[4]) {
-                case 'q': promotionPiece = new Piece(Piece::Type::QUEEN, game.getCurrentGameState().moveColour); break;
-                case 'r': promotionPiece = new Piece(Piece::Type::ROOK, game.getCurrentGameState().moveColour); break;
-                case 'b': promotionPiece = new Piece(Piece::Type::BISHOP, game.getCurrentGameState().moveColour); break;
-                case 'n': promotionPiece = new Piece(Piece::Type::KNIGHT, game.getCurrentGameState().moveColour); break;
-            }
+void UCISession::stop() {
+    // stop the engine search
+    if (engineThread.joinable()) {
+        engineThread.request_stop();
+        engineThread.join();
+        // return the best move found so far
+        if (pendingEngineMove) {
+            std::scoped_lock lock(engineMoveMutex);
+            std::cout << "bestmove " << convertGameStateMoveToUCIMove(*pendingEngineMove) << std::endl;
+            pendingEngineMove = std::nullopt;
         }
-        game.movePiece(game.getCurrentGameState(), move, game.getCurrentGameStateHistory(), promotionPiece);
-        delete promotionPiece;
+        else {
+            // purely for debugging, delete later
+            std::cerr << "no bestmove found" << std::endl;
+        }
     }
+}
+
+std::string UCISession::convertGameStateMoveToUCIMove(const Move& move) const {
+    std::string uciMove;
+    uciMove += static_cast<char>('a' + move.startSquare.x);
+    uciMove += static_cast<char>('1' + (7 - move.startSquare.y));
+    uciMove += static_cast<char>('a' + move.endSquare.x);
+    uciMove += static_cast<char>('1' + (7 - move.endSquare.y));
+
+    if (move.promotionPieceType) {
+        switch (*move.promotionPieceType) {
+            case Piece::Type::QUEEN:
+                uciMove += 'q';
+                break;
+            case Piece::Type::ROOK:
+                uciMove += 'r';
+                break;
+            case Piece::Type::BISHOP:
+                uciMove += 'b';
+                break;
+            case Piece::Type::KNIGHT:
+                uciMove += 'n';
+                break;
+            default:
+                break;
+        }
+    }
+    return uciMove;
 }

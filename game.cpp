@@ -1,12 +1,7 @@
 #include "game.h"
 #include <algorithm>
 #include <iostream>
-#include <map>
 #include <ranges>
-
-Game::Game() {
-    currentGameStateHistory = new std::vector<GameState>;
-}
 
 std::vector<Vector2Int> Game::generateLegalMovesForSquare(const GameState& gameState,  const Vector2Int startSquare) const {
     std::vector<Vector2Int> validMovableSquares;
@@ -21,10 +16,10 @@ std::vector<Vector2Int> Game::generateLegalMovesForSquare(const GameState& gameS
 
 void Game::reset() {
     currentGameState.reset();
-    currentGameStateHistory->clear();
+    currentGameStateHistory.clear();
 }
 
-bool Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>* gameStateHistory, const std::string& fen) const {
+bool Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>& gameStateHistory, const std::string& fen) const {
     gameState.reset();
 
     // tokenise the fen string so the 6 pieces of information can be handled individually
@@ -207,8 +202,7 @@ bool Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
         return false;
     }
 
-    if (gameStateHistory)
-        gameStateHistory->emplace_back(gameState);
+    gameStateHistory.emplace_back(gameState);
     return true;
 }
 
@@ -231,7 +225,7 @@ bool Game::pickupPieceFromBoard(GameState& gameState, const Vector2Int startSqua
 
 // TODO: this function is tightly coupled to main.cpp, it can be only used from main.cpp currently, all other classes that want to move pieces have to manually call checkIsMoveLegal() first.
 // TODO: it needs to be rewritten to be more clear about what its actually doing and to make it available to other classes if necessary.
-GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2Int endSquare, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const {
+GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2Int endSquare, std::vector<GameState>& gameStateHistory, const Piece* pawnPromotionChoice) const {
     auto moveType = GameTypes::MoveType::NONE;
 
     // ensure the piece and the piece start square will be valid for all the functions that need them and get called from this function
@@ -267,12 +261,11 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2I
     return moveType;
 }
 
-GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std::vector<GameState>* gameStateHistory) const {
+GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std::vector<GameState>& gameStateHistory) const {
     auto moveType = GameTypes::MoveType::NONE;
     const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
 
-    if (gameStateHistory)
-        gameStateHistory->emplace_back(gameState);
+    gameStateHistory.emplace_back(gameState);
 
     // ---------- en passant ---------------
 
@@ -336,16 +329,14 @@ GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std:
     if (checkIsKingInCheck(gameState, gameState.moveColour))
         moveType = GameTypes::MoveType::CHECK;
 
-    if (gameStateHistory) {
-        // check for how many times this gamestate (specifically board position) has appeared, if it is 3 or more then the game is drawn by threefold repetition
-        auto gameStateFrequency = 0;
-        for (const auto& previousGameState : *gameStateHistory) {
-            if (gameState == previousGameState) {
-                ++gameStateFrequency;
-                if (gameStateFrequency >= 3) {
-                    moveType = GameTypes::MoveType::GAMEOVER;
-                    gameState.gameOverType = GameTypes::GameOverType::TFRDRAW;
-                }
+    // check for how many times this gamestate (specifically board position) has appeared, if it is 3 or more then the game is drawn by threefold repetition
+    auto gameStateFrequency = 0;
+    for (const auto& previousGameState : gameStateHistory) {
+        if (gameState == previousGameState) {
+            ++gameStateFrequency;
+            if (gameStateFrequency >= 3) {
+                moveType = GameTypes::MoveType::GAMEOVER;
+                gameState.gameOverType = GameTypes::GameOverType::TFRDRAW;
             }
         }
     }
@@ -363,17 +354,17 @@ GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std:
     return moveType;
 }
 
-void Game::undoLastMove(GameState& gameState, std::vector<GameState>* gameStateHistory) const {
-    if (gameStateHistory->size() < 2) {
+void Game::undoLastMove(GameState& gameState, std::vector<GameState>& gameStateHistory) const {
+    if (gameStateHistory.size() < 2) {
         std::cerr << "Cannot undo last move - no history" << std::endl;
         return;
     }
 
-    gameState = gameStateHistory->back();
-    gameStateHistory->pop_back();
+    gameState = gameStateHistory.back();
+    gameStateHistory.pop_back();
 }
 
-void Game::updateCastlingRights(GameState& gameState, const Move move) const {
+void Game::updateCastlingRights(GameState& gameState, const Move &move) const {
     if (!gameState.boardPosition[move.startSquare.y][move.startSquare.x])
         return;
     const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
@@ -487,7 +478,8 @@ bool Game::checkIsMoveLegal(const GameState& gameState, const Move& move) const 
 
     // simulate the board position if the move was to be made
     auto simulatedGameState = gameState;
-    movePiece(simulatedGameState, move, nullptr);
+    std::vector<GameState> simulatedGameStateHistory;
+    movePiece(simulatedGameState, move, simulatedGameStateHistory);
 
     // disallow moves that would leave the king in check
     if (checkIsKingInCheck(simulatedGameState, gameState.moveColour))

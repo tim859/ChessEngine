@@ -119,7 +119,7 @@ class Game {
     // -------------------- game state members
 
     GameState currentGameState;
-    std::vector<GameState>* currentGameStateHistory;
+    std::vector<GameState> currentGameStateHistory;
 
     // -------------------- castling positions --------------------
 
@@ -131,11 +131,12 @@ class Game {
     const Vector2Int blackKingsideRookStartSquare = Vector2Int(7, 0);
 
 public:
-    Game();
     // -------------------- getters --------------------
 
     [[nodiscard]] GameState& getCurrentGameState() {return currentGameState;}
-    [[nodiscard]] std::vector<GameState>* getCurrentGameStateHistory() const {return currentGameStateHistory;}
+    [[nodiscard]] const GameState& getCurrentGameState() const {return currentGameState; }
+    [[nodiscard]] std::vector<GameState>& getCurrentGameStateHistory() {return currentGameStateHistory;}
+    [[nodiscard]] const std::vector<GameState>& getCurrentGameStateHistory() const { return currentGameStateHistory; }
     [[nodiscard]] std::array<std::array<std::optional<Piece>, 8>, 8> getCurrentBoardPosition() const {return currentGameState.boardPosition;}
     [[nodiscard]] std::optional<Vector2Int> getCurrentSelectedPieceStartSquare() const {return currentGameState.selectedPieceStartSquare;}
     [[nodiscard]] std::optional<Piece> getCurrentSelectedPiece() const {return currentGameState.selectedPiece;}
@@ -145,13 +146,13 @@ public:
     // -------------------- application functions (modify the game state) --------------------
 
     void reset();
-    bool populateGameStateFromFEN(GameState& gameState, std::vector<GameState>* gameStateHistory, const std::string& fen) const;
+    bool populateGameStateFromFEN(GameState& gameState, std::vector<GameState>& gameStateHistory, const std::string& fen) const;
     // TODO: remove pickupPieceFromBoard and placePieceOnBoard, all the logic they contained has been moved to movePiece and they now do almost nothing
     bool pickupPieceFromBoard(GameState& gameState, Vector2Int startSquare) const;
-    GameTypes::MoveType placePieceOnBoard(GameState& gameState, Vector2Int endSquare, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const;
-    GameTypes::MoveType movePiece(GameState& gameState, const Move& move, std::vector<GameState>* gameStateHistory) const;
-    void undoLastMove(GameState& gameState, std::vector<GameState>* gameStateHistory) const;
-    void updateCastlingRights(GameState& gameState, Move move) const;
+    GameTypes::MoveType placePieceOnBoard(GameState& gameState, Vector2Int endSquare, std::vector<GameState>& gameStateHistory, const Piece* pawnPromotionChoice) const;
+    GameTypes::MoveType movePiece(GameState& gameState, const Move& move, std::vector<GameState>& gameStateHistory) const;
+    void undoLastMove(GameState& gameState, std::vector<GameState>& gameStateHistory) const;
+    void updateCastlingRights(GameState& gameState, const Move &move) const;
     void castleRook(GameState& gameState, int rook) const;
 
     // -------------------- validation functions (do not modify the game state) --------------------
