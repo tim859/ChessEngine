@@ -229,6 +229,8 @@ bool Game::pickupPieceFromBoard(GameState& gameState, const Vector2Int startSqua
     return true;
 }
 
+// TODO: this function is tightly coupled to main.cpp, it can be only used from main.cpp currently, all other classes that want to move pieces have to manually call checkIsMoveLegal() first.
+// TODO: it needs to be rewritten to be more clear about what its actually doing and to make it available to other classes if necessary.
 GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2Int endSquare, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const {
     auto moveType = GameTypes::MoveType::NONE;
 
@@ -239,8 +241,11 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2I
         return moveType;
 
     // determine if piece can move to this square and move it if so
-    if (checkIsMoveLegal(gameState, Move(gameState.selectedPieceStartSquare.value(), endSquare))) {
-        moveType = movePiece(gameState, Move(gameState.selectedPieceStartSquare.value(), endSquare), gameStateHistory, pawnPromotionChoice);
+    auto move = Move(gameState.selectedPieceStartSquare.value(), endSquare);
+    if (checkIsMoveLegal(gameState, move)) {
+        if (pawnPromotionChoice)
+            move.promotionPieceType = pawnPromotionChoice->type;
+        moveType = movePiece(gameState, move, gameStateHistory);
     }
 
     // TODO: need to find a way to put this check back in movePiece without triggering a stack overflow, otherwise it wont know if the game is over when it is
@@ -262,7 +267,7 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2I
     return moveType;
 }
 
-GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const {
+GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std::vector<GameState>* gameStateHistory) const {
     auto moveType = GameTypes::MoveType::NONE;
     const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
 
@@ -323,8 +328,8 @@ GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std:
         ++gameState.fullMoveCounter;
 
     // check to see if a pawn has reached the other side and can be promoted
-    if (checkForPawnPromotionOnLastMove(gameState) && pawnPromotionChoice) {
-        gameState.boardPosition[move.endSquare.y][move.endSquare.x] = *pawnPromotionChoice;
+    if (checkForPawnPromotionOnLastMove(gameState) && move.promotionPieceType) {
+        gameState.boardPosition[move.endSquare.y][move.endSquare.x] = Piece(*move.promotionPieceType, gameState.moveColour);
         moveType = GameTypes::MoveType::PROMOTEPAWN;
     }
 
@@ -482,7 +487,7 @@ bool Game::checkIsMoveLegal(const GameState& gameState, const Move& move) const 
 
     // simulate the board position if the move was to be made
     auto simulatedGameState = gameState;
-    movePiece(simulatedGameState, move, nullptr, nullptr);
+    movePiece(simulatedGameState, move, nullptr);
 
     // disallow moves that would leave the king in check
     if (checkIsKingInCheck(simulatedGameState, gameState.moveColour))

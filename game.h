@@ -43,6 +43,8 @@ struct Piece {
     Type type;
     Colour colour;
 
+    Piece(const Type type, const Colour colour) : type(type), colour(colour) {}
+
     bool operator==(const Piece& other) const {
         return type == other.type && colour == other.colour;
     }
@@ -60,6 +62,7 @@ struct Piece {
 struct Move {
     Vector2Int startSquare;
     Vector2Int endSquare;
+    std::optional<Piece::Type> promotionPieceType;
     int score = 0;
 };
 
@@ -146,7 +149,7 @@ public:
     // TODO: remove pickupPieceFromBoard and placePieceOnBoard, all the logic they contained has been moved to movePiece and they now do almost nothing
     bool pickupPieceFromBoard(GameState& gameState, Vector2Int startSquare) const;
     GameTypes::MoveType placePieceOnBoard(GameState& gameState, Vector2Int endSquare, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const;
-    GameTypes::MoveType movePiece(GameState& gameState, const Move& move, std::vector<GameState>* gameStateHistory, const Piece* pawnPromotionChoice) const;
+    GameTypes::MoveType movePiece(GameState& gameState, const Move& move, std::vector<GameState>* gameStateHistory) const;
     void undoLastMove(GameState& gameState, std::vector<GameState>* gameStateHistory) const;
     void updateCastlingRights(GameState& gameState, Move move) const;
     void castleRook(GameState& gameState, int rook) const;
