@@ -2,6 +2,7 @@
 #define CHESS_ENGINE_H
 #include "game.h"
 #include <map>
+#include <thread>
 
 struct EngineSearchSettings {
     std::vector<Move> searchMoves;
@@ -19,13 +20,13 @@ class Engine {
 
 public:
     void reset();
-    Move generateEngineMove(Game& game, const EngineSearchSettings& engineSearchSettings = {});
+    Move generateEngineMove(const Game& game, const EngineSearchSettings& engineSearchSettings, const std::stop_token& stopToken);
 
 private:
     [[nodiscard]] int evaluateBoardPosition(const GameState& gameState) const;
     [[nodiscard]] int countMaterial(const GameState& gameState, Piece::Colour pieceColour) const;
-    int alphaBetaSearch(Game& game, GameState& gameState, std::vector<GameState>* gameStateHistory, int alpha, int beta, int depthLeft, int initialDepth);
-    void orderMoves (const Game& game, const GameState& gameState, std::vector<Move>& moves) const;
+    int alphaBetaSearch(Game& game, int alpha, int beta, int depthLeft, int initialDepth);
+    void orderMoves (const Game& game, std::vector<Move>& moves) const;
 };
 
 #endif //CHESS_ENGINE_H

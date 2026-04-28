@@ -1,21 +1,19 @@
 #include "engine.h"
 #include <random>
-#include <thread>
 #include <iostream>
 
 void Engine::reset() {
 
 }
 
-Move Engine::generateEngineMove(Game& game, const EngineSearchSettings& engineSearchSettings) {
+Move Engine::generateEngineMove(const Game& game, const EngineSearchSettings& engineSearchSettings, const std::stop_token& stopToken) {
     // TODO: implement all the engine search settings into the search
     // TODO: allow the search to be cancelled early and return the best move found so far
     // call searchMoves with a simulated gamestate that mirrors the current gamestate
-    auto simulatedGameState = game.getCurrentGameState();
-    auto* simulatedGameStateHistory = new std::vector<GameState>{simulatedGameState};
-    bestMove = game.generateAllLegalMoves(simulatedGameState).front();
+    auto simulatedGame = game;
+    bestMove = game.generateAllLegalMoves(simulatedGame.getCurrentGameState()).front();
     movesSearched = 0;
-    alphaBetaSearch(game, simulatedGameState, simulatedGameStateHistory, minusInfinity, infinity, 5, 5);
+    alphaBetaSearch(simulatedGame ,minusInfinity, infinity, 5, 5);
     std::cout << "moves searched: " << movesSearched << std::endl;
     return bestMove;
 }
@@ -41,26 +39,26 @@ int Engine::countMaterial(const GameState& gameState, const Piece::Colour pieceC
     return material;
 }
 
-int Engine::alphaBetaSearch(Game& game, GameState& gameState, std::vector<GameState>* gameStateHistory, int alpha, const int beta, const int depthLeft, const int initialDepth) {
+int Engine::alphaBetaSearch(Game& game, int alpha, const int beta, const int depthLeft, const int initialDepth) {
     if (depthLeft == 0)
         // TODO: implement quiescent function
-        return evaluateBoardPosition(gameState);
+        return evaluateBoardPosition(game.getCurrentGameState());
 
-    auto moves = game.generateAllLegalMoves(gameState);
+    auto moves = game.generateAllLegalMoves(game.getCurrentGameState());
     if (moves.empty()) {
-        if (game.checkIsKingInCheck(gameState, gameState.moveColour))
+        if (game.checkIsKingInCheck(game.getCurrentGameState(), game.getCurrentGameState().moveColour))
             return minusInfinity;
         return 0;
     }
 
-    orderMoves(game, gameState, moves);
+    orderMoves(game, moves);
 
     for (auto& move : moves) {
         // engine will always promote a pawn to a queen for the time being
         move.promotionPieceType = Piece::Type::QUEEN;
-        game.movePiece(gameState, move, gameStateHistory);
-        const int evaluation = -alphaBetaSearch(game, gameState, gameStateHistory, -beta, -alpha, depthLeft - 1, initialDepth);
-        game.undoLastMove(gameState, gameStateHistory);
+        game.movePiece(game.getCurrentGameState(), move, game.getCurrentGameStateHistory());
+        const int evaluation = -alphaBetaSearch(game, -beta, -alpha, depthLeft - 1, initialDepth);
+        game.undoLastMove(game.getCurrentGameState(), game.getCurrentGameStateHistory());
         ++movesSearched;
 
         if (evaluation >= beta)
@@ -77,26 +75,26 @@ int Engine::alphaBetaSearch(Game& game, GameState& gameState, std::vector<GameSt
     return alpha;
 }
 
-void Engine::orderMoves(const Game& game, const GameState& gameState, std::vector<Move>& moves) const {
+void Engine::orderMoves(const Game& game, std::vector<Move>& moves) const {
     for (auto& move : moves) {
         auto moveScoreGuess = 0;
-        const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
+        const auto movePiece = game.getCurrentGameState().boardPosition[move.startSquare.y][move.startSquare.x].value();
         const auto movePieceValue = pieceValues.at(movePiece.type);
 
         // check if a piece will be captured on this move
-        if (gameState.boardPosition[move.endSquare.y][move.endSquare.x]) {
-            const auto capturePiece = gameState.boardPosition[move.endSquare.y][move.endSquare.x].value();
+        if (game.getCurrentGameState().boardPosition[move.endSquare.y][move.endSquare.x]) {
+            const auto capturePiece = game.getCurrentGameState().boardPosition[move.endSquare.y][move.endSquare.x].value();
 
             // prioritise capturing opponents most valuable pieces with our least valuable pieces
             moveScoreGuess = 10 * pieceValues.at(capturePiece.type) - movePieceValue;
         }
 
         // promoting a pawn is likely to be good
-        if (game.checkForPawnPromotionOnNextMove(gameState, move))
+        if (game.checkForPawnPromotionOnNextMove(game.getCurrentGameState(), move))
             moveScoreGuess += pieceValues.at(Piece::Type::QUEEN);
 
         // penalise moving pieces to a square under attack by an opponent pawn
-        if (game.checkIsSquareUnderAttackByPawn(gameState, move.endSquare, gameState.moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE))
+        if (game.checkIsSquareUnderAttackByPawn(game.getCurrentGameState(), move.endSquare, game.getCurrentGameState().moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE))
             moveScoreGuess -= movePieceValue;
 
         move.score = moveScoreGuess;

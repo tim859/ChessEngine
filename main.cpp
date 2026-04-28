@@ -132,9 +132,12 @@ void processEngineMove() {
         }
 
         engineThinking = true;
+        EngineSearchSettings engineSearchSettings;
         // spawn a new worker thread that will allow the engine to spend time thinking about the move without freezing the main thread and therefore the program
-        engineThread = std::jthread([] {
-            Move move = engine.generateEngineMove(game);
+        // TODO: update this function to use the stop token to check if the engine has finished instead of bool flags.
+        // TODO: also update this function to take advantage of EngineSearchSettings and allow the user to customise those settings
+        engineThread = std::jthread([engineSearchSettings](const std::stop_token& stopToken) {
+            Move move = engine.generateEngineMove(game, engineSearchSettings, stopToken);
             std::scoped_lock lock(engineMoveMutex);
             pendingEngineMove = move;
         });

@@ -38,7 +38,7 @@ bool validateUCIMove(const std::string &move) {
     return true;
 }
 
-Move convertUCIMoveToGameMove(const std::string &uciMove) {
+Move convertUCIMoveToGameStateMove(const std::string &uciMove) {
     // failsafe to prevent out of bounds errors, but this function should only ever be called right after checking with validateUCIMove anyway
     if (!validateUCIMove(uciMove)) {
         std::cerr << "Warning! Attempt to convert UCI move to GameState move failed as UCI move failed validation." << std::endl;
@@ -267,7 +267,7 @@ int main() {
                     // validate that the token complies with the uci notation standard (tokens that don't, will be ignored)
                     if (validateUCIMove(tokens[i]))
                         // convert the uci move to a move compatible with the programs internal architecture and push it to the vector
-                        positionCommand.moves.push_back(convertUCIMoveToGameMove(tokens[i]));
+                        positionCommand.moves.push_back(convertUCIMoveToGameStateMove(tokens[i]));
                 }
                 // ensure at least 1 valid move followed the "moves" keyword
                 if (positionCommand.moves.empty()) {
@@ -332,7 +332,7 @@ int main() {
                         if (isSubcommand(getLowercase(tokens[i])))
                             break;
                         if (validateUCIMove(tokens[i]))
-                            goCommand.searchMoves.push_back(convertUCIMoveToGameMove(tokens[i]));
+                            goCommand.searchMoves.push_back(convertUCIMoveToGameStateMove(tokens[i]));
                     }
                     --i;
 
