@@ -29,6 +29,7 @@ class UCISession {
     Engine engine;
     UCISettings uciSettings;
     std::jthread engineThread;
+    std::jthread completionThread;
     std::mutex engineMoveMutex;
     std::optional<Move> pendingEngineMove;
 

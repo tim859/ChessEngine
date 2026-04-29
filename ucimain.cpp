@@ -264,10 +264,12 @@ int main() {
                 }
                 // all tokens after the "moves" keyword are treated as potential moves
                 for (size_t i = *movesTokenIndex + 1; i < tokens.size(); ++i) {
-                    // validate that the token complies with the uci notation standard (tokens that don't, will be ignored)
-                    if (validateUCIMove(tokens[i]))
-                        // convert the uci move to a move compatible with the programs internal architecture and push it to the vector
-                        positionCommand.moves.push_back(convertUCIMoveToGameStateMove(tokens[i]));
+                    // validate that the token complies with the uci notation standard
+                    // if an invalid move is found, only moves before the invalid move will be processed
+                    if (!validateUCIMove(tokens[i]))
+                        break;
+                    // convert the uci move to a move compatible with the programs internal architecture and push it to the vector
+                    positionCommand.moves.push_back(convertUCIMoveToGameStateMove(tokens[i]));
                 }
                 // ensure at least 1 valid move followed the "moves" keyword
                 if (positionCommand.moves.empty()) {
@@ -289,6 +291,7 @@ int main() {
 
             // map for looking up the relevant std::optional<int> to modify based on the go subcommand found
             static const std::unordered_map<std::string, std::optional<int> GoCommand::*> goCommandIntFields = {
+                {"perft", &GoCommand::perft},
                 {"wtime", &GoCommand::wtime},
                 {"btime", &GoCommand::btime},
                 {"winc", &GoCommand::winc},
@@ -307,7 +310,7 @@ int main() {
             bool failedValidation = false;
             // helper lambda that cuts down on repeatedly writing the same thing
             const auto failValidation = [&] {
-                std::cout << R"("go" command requires: "go [searchmoves <move1> ... <movei>] [ponder] [wtime <x>] [btime <x>] [winc <x>] [binc <x>] [movestogo <x>] [depth <x>] [nodes <x>] [mate <x>] [movetime <x>] [infinite]")" << std::endl;
+                std::cout << R"("go" command requires: "go [searchmoves <move1> ... <movei>] [ponder] [perft <x>] [wtime <x>] [btime <x>] [winc <x>] [binc <x>] [movestogo <x>] [depth <x>] [nodes <x>] [mate <x>] [movetime <x>] [infinite]")" << std::endl;
                 failedValidation = true;
             };
 
@@ -329,10 +332,10 @@ int main() {
                     goCommand.searchMoves.clear();
                     // all tokens after the "searchmoves" subcommand are treated as potential moves until the next subcommand is found
                     for (++i; i < tokens.size(); ++i) {
-                        if (isSubcommand(getLowercase(tokens[i])))
+                        // moves will be processed until a subcommand or an invalid move is found
+                        if (isSubcommand(getLowercase(tokens[i])) || !validateUCIMove(tokens[i]))
                             break;
-                        if (validateUCIMove(tokens[i]))
-                            goCommand.searchMoves.push_back(convertUCIMoveToGameStateMove(tokens[i]));
+                        goCommand.searchMoves.push_back(convertUCIMoveToGameStateMove(tokens[i]));
                     }
                     --i;
 

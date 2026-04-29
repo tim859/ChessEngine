@@ -117,6 +117,8 @@ bool Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
 
     // ---------- 3. castling rights ----------
 
+    gameState.whiteCastleRights = {false, false};
+    gameState.blackCastleRights = {false, false};
     if (fenTokens[2] != "-") {
         for (const auto& character : fenTokens[2]) {
             switch (character) {
@@ -322,7 +324,7 @@ GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std:
 
     // check to see if a pawn has reached the other side and can be promoted
     if (checkForPawnPromotionOnLastMove(gameState) && move.promotionPieceType) {
-        gameState.boardPosition[move.endSquare.y][move.endSquare.x] = Piece(*move.promotionPieceType, gameState.moveColour);
+        gameState.boardPosition[move.endSquare.y][move.endSquare.x] = Piece(*move.promotionPieceType, movePiece.colour);
         moveType = GameTypes::MoveType::PROMOTEPAWN;
     }
 
@@ -550,30 +552,48 @@ int Game::checkForCastle(const GameState& gameState, const Move& move) const {
     const auto& castleRights = isWhite ? gameState.whiteCastleRights : gameState.blackCastleRights;
     const Vector2Int kingStartSquare = isWhite ? whiteKingStartSquare : blackKingStartSquare;
     const int startRow = isWhite ? 7 : 0;
+    const auto rookColour = isWhite ? Piece::Colour::WHITE : Piece::Colour::BLACK;
 
     struct CastleOption {
         int rightsIndex{};
         Vector2Int kingTarget;
+        Vector2Int rookStartSquare;
+        std::array<Vector2Int, 3> squaresToCheck;
+        int squaresToCheckCount{};
         int rookIndex{};
     };
 
     const CastleOption castleOptions[2] = {
         // queenside
-        {0, {2, startRow}, isWhite ? 1 : 3},
+        {0, {2, startRow}, {0, startRow}, {{{1, startRow}, {2, startRow}, {3, startRow}}}, 3, isWhite ? 1 : 3},
         // kingside
-        {1, {6, startRow}, isWhite ? 2 : 4}};
+        {1, {6, startRow}, {7, startRow}, {{{5, startRow}, {6, startRow}, {0, 0}}}, 2, isWhite ? 2 : 4}};
 
     if (move.startSquare != kingStartSquare)
         return 0;
 
     // for both the queenside and the kingside of the king we check
     for (const auto& castleOption : castleOptions) {
-        // if the king has the right to castle on that side, if the king will end up on the correct square and if the squares between the king and the rook are clear
-        if (castleRights[castleOption.rightsIndex] && move.endSquare == castleOption.kingTarget && checkIsMovePathClearForSliders(gameState, move)) {
-            // if all these conditions are met then the king is allowed to castle/move two squares
-            // returns 0 if no castle, return 1 to 4 to specify which rook needs to move as well
-            return castleOption.rookIndex;
+        if (!castleRights[castleOption.rightsIndex] || move.endSquare != castleOption.kingTarget)
+            continue;
+
+        const auto& rookSquare = gameState.boardPosition[castleOption.rookStartSquare.y][castleOption.rookStartSquare.x];
+        if (!rookSquare || rookSquare->type != Piece::Type::ROOK || rookSquare->colour != rookColour)
+            continue;
+
+        auto pathClear = true;
+        for (int i = 0; i < castleOption.squaresToCheckCount; ++i) {
+            const auto& square = castleOption.squaresToCheck[i];
+            if (gameState.boardPosition[square.y][square.x]) {
+                pathClear = false;
+                break;
+            }
         }
+
+        // if all these conditions are met then the king is allowed to castle/move two squares
+        // returns 0 if no castle, return 1 to 4 to specify which rook needs to move as well
+        if (pathClear)
+            return castleOption.rookIndex;
     }
     return 0;
 }

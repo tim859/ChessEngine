@@ -18,10 +18,30 @@ Move Engine::generateEngineMove(const Game& game, const EngineSearchSettings& en
     return bestMove;
 }
 
+std::vector<std::pair<Move, std::uint64_t>> Engine::generatePerftDivide(const Game& game, const int depth) const {
+    // "divide" output is perft split by root move so external tools can bisect exactly where counts diverge.
+    std::vector<std::pair<Move, std::uint64_t>> divide;
+    // use a copy instead of the live session
+    auto simulatedGame = game;
+    // promotion moves need to be expanded before we start counting, otherwise promotion positions will be undercounted.
+    const auto moves = generatePerftMoves(simulatedGame);
+
+    divide.reserve(moves.size());
+    for (const auto& move : moves) {
+        // play one legal root move, count the subtree below it, then restore the snapshot for the next root move.
+        simulatedGame.movePiece(simulatedGame.getCurrentGameState(), move, simulatedGame.getCurrentGameStateHistory());
+        const std::uint64_t nodes = perft(simulatedGame, depth - 1);
+        simulatedGame.undoLastMove(simulatedGame.getCurrentGameState(), simulatedGame.getCurrentGameStateHistory());
+        // keep the original move paired with its subtree size so UCISession can print "move: nodes" lines.
+        divide.emplace_back(move, nodes);
+    }
+    return divide;
+}
+
 int Engine::evaluateBoardPosition(const GameState& gameState) const {
     const auto evaluation = countMaterial(gameState, Piece::Colour::WHITE) - countMaterial(gameState, Piece::Colour::BLACK);;
     const auto perspective = gameState.moveColour == Piece::Colour::WHITE ? 1 : -1;
-    //std::cout << "evaluation: " << evaluation << std::endl;
+    // std::cout << "evaluation: " << evaluation << std::endl;
     return evaluation * perspective;
 }
 
@@ -37,6 +57,54 @@ int Engine::countMaterial(const GameState& gameState, const Piece::Colour pieceC
     }
     //std::cout << "material: " << material << std::endl;
     return material;
+}
+
+std::uint64_t Engine::perft(Game& game, const int depth) const {
+    // perft counts legal move tree size only; it should not evaluate positions or apply search heuristics.
+    // depth 0 means "the current position itself is one leaf node".
+    if (depth == 0)
+        return 1;
+
+    // generate the exact legal children from this position, including all promotion variants.
+    const auto moves = generatePerftMoves(game);
+    // once we are one ply away from the leaves, the node count is just the number of legal moves.
+    if (depth == 1)
+        return moves.size();
+
+    std::uint64_t nodes = 0;
+    for (const auto& move : moves) {
+        // standard recursive perft flow: make move, count descendants, then undo before trying the next sibling.
+        game.movePiece(game.getCurrentGameState(), move, game.getCurrentGameStateHistory());
+        nodes += perft(game, depth - 1);
+        game.undoLastMove(game.getCurrentGameState(), game.getCurrentGameStateHistory());
+    }
+    return nodes;
+}
+
+std::vector<Move> Engine::generatePerftMoves(const Game& game) const {
+    // perft must treat each promotion piece as a separate legal move, whereas the search currently defaults promotions to queens.
+    static const std::array promotionPieceTypes = {
+        Piece::Type::QUEEN,
+        Piece::Type::ROOK,
+        Piece::Type::BISHOP,
+        Piece::Type::KNIGHT
+    };
+
+    std::vector<Move> perftMoves;
+    for (const auto& move : game.generateAllLegalMoves(game.getCurrentGameState())) {
+        if (game.checkForPawnPromotionOnNextMove(game.getCurrentGameState(), move)) {
+            // a single legal promotion square expands into four separate UCI/legal moves: q, r, b and n.
+            for (const auto promotionPieceType : promotionPieceTypes) {
+                auto promotionMove = move;
+                promotionMove.promotionPieceType = promotionPieceType;
+                perftMoves.emplace_back(promotionMove);
+            }
+        }
+        // non-promotion moves can be forwarded unchanged.
+        else
+            perftMoves.emplace_back(move);
+    }
+    return perftMoves;
 }
 
 int Engine::alphaBetaSearch(Game& game, int alpha, const int beta, const int depthLeft, const int initialDepth) {

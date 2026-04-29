@@ -6,3 +6,5 @@
 cmake-build-*/
 cmake-build-debug-visual-studio/
 build/
+
+testing/
