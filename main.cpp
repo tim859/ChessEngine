@@ -15,9 +15,9 @@ Engine engine;
 Audio audio;
 sf::RenderWindow window(sf::VideoMode({1200, 1200}), "Chess");
 const int squareSize = 150;
-bool pawnPendingPromotion = false;
+bool waitingForPawnPromotionChoice = false;
 Piece* pawnPromotionPiece;
-sf::Vector2i pawnPromotionSquare;
+Vector2Int pawnPromotionSquare;
 
 auto engineTurn = false;
 auto engineThinking = false;
@@ -45,26 +45,15 @@ void processUserInput(const std::optional<sf::Event> &event) {
     if (game.getCurrentGameOverType() != GameTypes::GameOverType::CONTINUE || engineTurn)
         return;
 
+    if (const auto* mouseButtonMoved = event->getIf<sf::Event::MouseMoved>())
+        mousePosition = {mouseButtonMoved->position.x, mouseButtonMoved->position.y};
+
     if (const auto* mouseButtonPressed = event->getIf<sf::Event::MouseButtonPressed>())
     {
         if (mouseButtonPressed->button == sf::Mouse::Button::Left)
         {
             mousePosition = {mouseButtonPressed->position.x, mouseButtonPressed->position.y};
-
-            // use the location of the players mouse press to get which type of piece they want to promote their pawn to
-            if (pawnPendingPromotion) {
-                const float direction = game.getCurrentGameState().moveColour == Piece::Colour::WHITE ? 1 : -1;
-                if (boardView.getSquare(mousePosition.x, mousePosition.y) == pawnPromotionSquare)
-                    pawnPromotionPiece = new Piece(Piece::Type::QUEEN, game.getCurrentGameState().moveColour);
-                if (boardView.getSquare(mousePosition.x, mousePosition.y) == sf::Vector2i(pawnPromotionSquare.x, pawnPromotionSquare.y + direction))
-                    pawnPromotionPiece = new Piece(Piece::Type::ROOK, game.getCurrentGameState().moveColour);
-                if (boardView.getSquare(mousePosition.x, mousePosition.y) == sf::Vector2i(pawnPromotionSquare.x, pawnPromotionSquare.y + (direction * 2)))
-                    pawnPromotionPiece = new Piece(Piece::Type::KNIGHT, game.getCurrentGameState().moveColour);
-                if (boardView.getSquare(mousePosition.x, mousePosition.y) == sf::Vector2i(pawnPromotionSquare.x, pawnPromotionSquare.y + (direction * 3)))
-                    pawnPromotionPiece = new Piece(Piece::Type::BISHOP, game.getCurrentGameState().moveColour);
-                return;
-            }
-            if (const sf::Vector2i startSquare = boardView.getSquare(mouseButtonPressed->position.x, mouseButtonPressed->position.y); game.pickupPieceFromBoard(game.getCurrentGameState(), startSquare))
+            if (const Vector2Int startSquare = boardView.getSquare(mousePosition.x, mousePosition.y); game.pickupPieceFromBoard(game.getCurrentGameState(), startSquare))
                 boardView.pickupPieceFromBoard(startSquare, game.generateLegalMovesForSquare(game.getCurrentGameState(), startSquare));
         }
     }
@@ -73,35 +62,116 @@ void processUserInput(const std::optional<sf::Event> &event) {
         if (mouseButtonReleased->button == sf::Mouse::Button::Left)
         {
             mousePosition = {mouseButtonReleased->position.x, mouseButtonReleased->position.y};
-            const auto endSquare = boardView.getSquare(mouseButtonReleased->position.x, mouseButtonReleased->position.y);
 
-            // need to check if this possible move will promote a pawn, as the piece shouldn't be moved in the gamestate until the player confirms what piece they want to promote the pawn to
-            if (game.getCurrentGameState().selectedPieceStartSquare) {
-                if (!pawnPendingPromotion && game.checkForPawnPromotionOnNextMove(game.getCurrentGameState(), Move(game.getCurrentGameState().selectedPieceStartSquare.value(), endSquare))) {
-                    pawnPromotionSquare = endSquare;
-                    pawnPendingPromotion = true;
+            // use the location of the players mouse press to determine which type of piece they want to promote their pawn to
+            // the logic is mapped to a column of four squares in the same way as the drawing is in drawWindow()
+            if (waitingForPawnPromotionChoice) {
+                const float direction = game.getCurrentGameState().moveColour == Piece::Colour::WHITE ? 1 : -1;
+                if (boardView.getSquare(mousePosition.x, mousePosition.y) == pawnPromotionSquare)
+                    pawnPromotionPiece = new Piece(Piece::Type::QUEEN, game.getCurrentGameState().moveColour);
+                if (boardView.getSquare(mousePosition.x, mousePosition.y) == Vector2Int(pawnPromotionSquare.x, pawnPromotionSquare.y + direction))
+                    pawnPromotionPiece = new Piece(Piece::Type::ROOK, game.getCurrentGameState().moveColour);
+                if (boardView.getSquare(mousePosition.x, mousePosition.y) == Vector2Int(pawnPromotionSquare.x, pawnPromotionSquare.y + (direction * 2)))
+                    pawnPromotionPiece = new Piece(Piece::Type::KNIGHT, game.getCurrentGameState().moveColour);
+                if (boardView.getSquare(mousePosition.x, mousePosition.y) == Vector2Int(pawnPromotionSquare.x, pawnPromotionSquare.y + (direction * 3)))
+                    pawnPromotionPiece = new Piece(Piece::Type::BISHOP, game.getCurrentGameState().moveColour);
+
+                // make sure pawnPromotionPiece is pointing to a valid piece, otherwise the player could click anywhere on the board, and it would still set waitingForPawnPromotionChoice to false
+                if (pawnPromotionPiece)
+                    waitingForPawnPromotionChoice = false;
+            }
+
+            // endSquare uses the mouse position to determine which square the piece is moving to, this is accurate unless the player is promoting a pawn to a rook, a knight or a bishop, in which case the mouse won't be on the end square
+            const auto endSquare = boardView.getSquare(mousePosition.x, mousePosition.y);
+
+            // check ahead of making the move if the move will promote a pawn, need to get the player choice of pawn promotion before the move is made
+            if (!waitingForPawnPromotionChoice && !pawnPromotionPiece) {
+                if (game.getCurrentGameState().selectedPieceStartSquare) {
+                    if (game.checkForPawnPromotionOnNextMove(game.getCurrentGameState(), Move(game.getCurrentGameState().selectedPieceStartSquare.value(), endSquare))) {
+                        pawnPromotionSquare = endSquare;
+                        waitingForPawnPromotionChoice = true;
+                    }
                 }
             }
 
-            // wait until the player has selected their promotion piece if they need to select one
-            if (pawnPendingPromotion && !pawnPromotionPiece)
+            // don't move the piece if the player still needs to decide which piece to promote the pawn to
+            if (waitingForPawnPromotionChoice)
                 return;
 
-            const auto moveType = game.placePieceOnBoard(game.getCurrentGameState(), endSquare, game.getCurrentGameStateHistory(), pawnPromotionPiece);
-            boardView.placePieceOnBoard(moveType != GameTypes::MoveType::NONE, boardView.getSquare(mouseButtonReleased->position.x, mouseButtonReleased->position.y));
-
-            audio.playSound(moveType);
+            GameTypes::MoveType moveType;
+            if (pawnPromotionPiece) {
+                // promoting a pawn requires passing in the pawnPromotionSquare as the endSquare because the endSquare is based on mouse position and that won't be accurate if the player selected a promotion piece other than the queen
+                moveType = game.placePieceOnBoard(game.getCurrentGameState(), pawnPromotionSquare, game.getCurrentGameStateHistory(), pawnPromotionPiece);
+                boardView.placePieceOnBoard(moveType != GameTypes::MoveType::NONE, pawnPromotionSquare);
+            }
+            else {
+                // standard move (not promoting a pawn)
+                moveType = game.placePieceOnBoard(game.getCurrentGameState(), endSquare, game.getCurrentGameStateHistory(), nullptr);
+                boardView.placePieceOnBoard(moveType != GameTypes::MoveType::NONE, endSquare);
+            }
+            delete pawnPromotionPiece;
+            pawnPromotionPiece = nullptr;
+            audio.playSoundOnMove(moveType);
 
             if (moveType != GameTypes::MoveType::NONE)
                 engineTurn = true;
-
-            pawnPendingPromotion = false;
-            pawnPromotionPiece = nullptr;
         }
     }
+}
 
-    if (const auto* mouseButtonMoved = event->getIf<sf::Event::MouseMoved>())
-        mousePosition = {mouseButtonMoved->position.x, mouseButtonMoved->position.y};
+void processEngineMove() {
+    // game is over so no processing needed
+    if (game.getCurrentGameOverType() != GameTypes::GameOverType::CONTINUE)
+        return;
+
+    if (!engineThinking) {
+        if (const auto legalMoves = game.generateAllLegalMoves(game.getCurrentGameState()); legalMoves.empty()) {
+            // the game is either drawn or lost for the engine
+            std::cout << "no legal moves left for engine" << std::endl;
+            return;
+        }
+
+        engineThinking = true;
+        EngineSearchSettings engineSearchSettings;
+        // spawn a new worker thread that will allow the engine to spend time thinking about the move without freezing the main thread and therefore the program
+        // TODO: update this function to use the stop token to check if the engine has finished instead of bool flags.
+        // TODO: also update this function to take advantage of EngineSearchSettings and allow the user to customise those settings
+        engineThread = std::jthread([engineSearchSettings](const std::stop_token& stopToken) {
+            Move move = engine.generateEngineMove(game, engineSearchSettings, stopToken);
+            std::scoped_lock lock(engineMoveMutex);
+            pendingEngineMove = move;
+        });
+    }
+    else {
+        // safely (threadwise) get the value in pendingEngineMove
+        std::optional<Move> move;
+        {
+            std::scoped_lock lock(engineMoveMutex);
+            move = pendingEngineMove;
+            if (move) {
+                pendingEngineMove.reset();
+            }
+        }
+
+        // if there was a valid move in pendingEngineMove, the worker thread is killed and the move is applied on the board
+        if (move) {
+            if (engineThread.joinable()) {
+                engineThread.join();
+            }
+            engineThinking = false;
+
+            game.pickupPieceFromBoard(game.getCurrentGameState(), move->startSquare);
+            boardView.pickupPieceFromBoard(move->startSquare, game.generateLegalMovesForSquare(game.getCurrentGameState(), move->startSquare));
+
+            // for now, engine will always promote a pawn to a queen
+            const auto piece = Piece(Piece::Type::QUEEN, game.getCurrentGameState().moveColour);
+            const auto moveType = game.placePieceOnBoard(game.getCurrentGameState(), move->endSquare, game.getCurrentGameStateHistory(), &piece);
+            boardView.placePieceOnBoard(moveType != GameTypes::MoveType::NONE, move->endSquare);
+
+            audio.playSoundOnMove(moveType);
+            engineTurn = false;
+        }
+    }
 }
 
 void drawWindow() {
@@ -114,9 +184,9 @@ void drawWindow() {
 
     // ------------------------- conditionally drawn
 
-    if (game.getCurrentSelectedPiece() && !pawnPendingPromotion)
+    if (game.getCurrentSelectedPiece() && !waitingForPawnPromotionChoice)
         boardView.drawSelectedPiece(window, game.getCurrentSelectedPiece().value(), mousePosition.x, mousePosition.y);
-    if (pawnPendingPromotion) {
+    if (waitingForPawnPromotionChoice) {
         int pawnPromotionOverlayY;
         // account for the side of the board that the pawn promotion menu should be displayed on
         if (game.getCurrentGameState().moveColour == Piece::Colour::WHITE) {
@@ -130,7 +200,7 @@ void drawWindow() {
         pawnPromotionOverlay.setPosition(static_cast<sf::Vector2f>(sf::Vector2(pawnPromotionSquare.x * squareSize, pawnPromotionOverlayY)));
         window.draw(pawnPromotionOverlay);
 
-        boardView.drawPawnPromotionPieces(window, game.getCurrentGameState().moveColour, static_cast<sf::Vector2f>(pawnPromotionSquare));
+        boardView.drawPawnPromotionPieces(window, game.getCurrentGameState().moveColour, pawnPromotionSquare);
     }
     if (game.getCurrentGameOverType() != GameTypes::GameOverType::CONTINUE) {
         switch (game.getCurrentGameOverType()) {
@@ -162,58 +232,6 @@ void drawWindow() {
     window.display();
 }
 
-void processEngineMove() {
-    // game is over so no processing needed
-    if (game.getCurrentGameOverType() != GameTypes::GameOverType::CONTINUE)
-        return;
-
-    if (!engineThinking) {
-        if (const auto legalMoves = game.generateAllLegalMoves(game.getCurrentGameState()); legalMoves.empty()) {
-            // the game is either drawn or lost for the engine
-            std::cout << "no legal moves left for engine" << std::endl;
-            return;
-        }
-
-        engineThinking = true;
-        // spawn a new worker thread that will allow the engine to spend time thinking about the move without freezing the main thread and therefore the program
-        engineThread = std::jthread([] {
-            Move move = engine.generateEngineMove(game);
-            std::scoped_lock lock(engineMoveMutex);
-            pendingEngineMove = move;
-        });
-    }
-    else {
-        // safely (threadwise) get the value in pendingEngineMove
-        std::optional<Move> move;
-        {
-            std::scoped_lock lock(engineMoveMutex);
-            move = pendingEngineMove;
-            if (move) {
-                pendingEngineMove.reset();
-            }
-        }
-
-        // if there was a valid move in pendingEngineMove, the worker thread is killed and the move is applied on the board
-        if (move) {
-            if (engineThread.joinable()) {
-                engineThread.join();
-            }
-            engineThinking = false;
-
-            game.pickupPieceFromBoard(game.getCurrentGameState(), move->startSquare);
-            boardView.pickupPieceFromBoard(move->startSquare, game.generateLegalMovesForSquare(game.getCurrentGameState(), move->startSquare));
-
-            // for now, engine will always promote a pawn to a queen
-            const auto piece = Piece(Piece::Type::QUEEN, game.getCurrentGameState().moveColour);
-            const auto moveType = game.placePieceOnBoard(game.getCurrentGameState(), move->endSquare, game.getCurrentGameStateHistory(), &piece);
-            boardView.placePieceOnBoard(moveType != GameTypes::MoveType::NONE, move->endSquare);
-
-            audio.playSound(moveType);
-            engineTurn = false;
-        }
-    }
-}
-
 int main() {
     gameOverOverlay.setFillColor(sf::Color(0, 0, 0, 150));
     gameOverText.setFillColor(sf::Color::White);
@@ -221,7 +239,12 @@ int main() {
     gameOverText.setPosition({squareSize * 2, squareSize * 3});
 
     // standard chess starting position fen string
-    game.populateCurrentGameStateWithFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w QKqk - 0 0");
+    game.populateGameStateFromFEN(game.getCurrentGameState(), game.getCurrentGameStateHistory(), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w QKqk - 0 0");
+
+    // testing pawn promotion fen string
+    // game.populateGameStateFromFEN("8/PPPPPPPP/8/8/8/8/pppppppp/8 w - - 0 0");
+
+    audio.playSoundOnStart();
 
     // run the program as long as the window is open
     while (window.isOpen())

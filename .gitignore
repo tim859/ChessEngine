@@ -1,0 +1,10 @@
+# JetBrains / CLion
+.idea/
+*.iml
+
+# CMake build directories
+cmake-build-*/
+cmake-build-debug-visual-studio/
+build/
+
+testing/

@@ -21,10 +21,10 @@ class BoardView {
     struct HighlightedSquare {
         enum class HighlightType {STARTMOVE, STOPMOVE, VALIDMOVE, VALIDMOVEALT};
 
-        sf::Vector2<int> position;
+        Vector2Int position;
         HighlightType highlightType;
 
-        HighlightedSquare(const sf::Vector2<int> newPosition, const HighlightType newColourType) : position(newPosition), highlightType(newColourType) {}
+        HighlightedSquare(const Vector2Int newPosition, const HighlightType newColourType) : position(newPosition), highlightType(newColourType) {}
     };
 
     std::optional<HighlightedSquare> currentMoveHighlightedSquare;
@@ -34,12 +34,12 @@ class BoardView {
 public:
     BoardView();
     void drawBoard(sf::RenderWindow& window) const;
-    void drawPieces(sf::RenderWindow& window, const std::array<std::array<std::optional<Piece>, 8>, 8>& piecePositions, std::optional<sf::Vector2<int>> excludedSquare) const;
+    void drawPieces(sf::RenderWindow& window, const std::array<std::array<std::optional<Piece>, 8>, 8>& piecePositions, std::optional<Vector2Int> excludedSquare) const;
     void drawSelectedPiece(sf::RenderWindow& window, Piece piece, int mouseX, int mouseY) const;
-    void drawPawnPromotionPieces(sf::RenderWindow& window, Piece::Colour pieceColour, sf::Vector2f pawnPromotionSquare) const;
-    void pickupPieceFromBoard(sf::Vector2<int> startSquare, const std::vector<sf::Vector2<int>>& validMovableSquares);
-    void placePieceOnBoard(bool pieceMoved, sf::Vector2<int> endSquare);
-    [[nodiscard]] sf::Vector2<int> getSquare(int mouseX, int mouseY) const;
+    void drawPawnPromotionPieces(sf::RenderWindow& window, Piece::Colour pieceColour, Vector2Int pawnPromotionSquare) const;
+    void pickupPieceFromBoard(Vector2Int startSquare, const std::vector<Vector2Int>& validMovableSquares);
+    void placePieceOnBoard(bool pieceMoved, Vector2Int endSquare);
+    [[nodiscard]] Vector2Int getSquare(int mouseX, int mouseY) const;
 
 private:
     const sf::Texture& GetPieceTexture(Piece piece) const;
