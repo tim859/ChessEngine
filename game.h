@@ -30,6 +30,15 @@ struct Vector2Int {
     }
 };
 
+// -------------------- castling positions --------------------
+
+inline constexpr auto whiteKingStartSquare = Vector2Int(4, 7);
+inline constexpr auto whiteQueensideRookStartSquare = Vector2Int(0, 7);
+inline constexpr auto whiteKingsideRookStartSquare = Vector2Int(7, 7);
+inline constexpr auto blackKingStartSquare = Vector2Int(4, 0);
+inline constexpr auto blackQueensideRookStartSquare = Vector2Int(0, 0);
+inline constexpr auto blackKingsideRookStartSquare = Vector2Int(7, 0);
+
 namespace GameTypes {
     enum class MoveType {NONE, MOVESELF, CAPTURE, CASTLE, PROMOTEPAWN, CHECK, GAMEOVER};
     enum class GameOverType {CONTINUE, STALEMATE, TFRDRAW, FIFTYMOVEDRAW, WHITEWINBYCHECKMATE, BLACKWINBYCHECKMATE, WHITEWINBYRESIGN, BLACKWINBYRESIGN};
@@ -116,19 +125,8 @@ struct GameState {
 };
 
 class Game {
-    // -------------------- game state members
-
     GameState currentGameState;
     std::vector<GameState> currentGameStateHistory;
-
-    // -------------------- castling positions --------------------
-
-    const Vector2Int whiteKingStartSquare = Vector2Int(4, 7);
-    const Vector2Int whiteQueensideRookStartSquare = Vector2Int(0, 7);
-    const Vector2Int whiteKingsideRookStartSquare = Vector2Int(7, 7);
-    const Vector2Int blackKingStartSquare = Vector2Int(4, 0);
-    const Vector2Int blackQueensideRookStartSquare = Vector2Int(0, 0);
-    const Vector2Int blackKingsideRookStartSquare = Vector2Int(7, 0);
 
 public:
     // -------------------- getters --------------------

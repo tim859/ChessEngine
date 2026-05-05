@@ -1,7 +1,6 @@
 #ifndef CHESS_ENGINE_H
 #define CHESS_ENGINE_H
 #include "game.h"
-#include <cstdint>
 #include <map>
 #include <thread>
 
@@ -29,7 +28,7 @@ private:
     [[nodiscard]] int countMaterial(const GameState& gameState, Piece::Colour pieceColour) const;
     [[nodiscard]] std::uint64_t perft(Game& game, int depth) const;
     [[nodiscard]] std::vector<Move> generatePerftMoves(const Game& game) const;
-    int alphaBetaSearch(Game& game, int alpha, int beta, int depthLeft, int initialDepth);
+    int alphaBetaSearch(Game& game, int alpha, int beta, int depthLeft, int initialDepth, const std::stop_token& stopToken);
     void orderMoves (const Game& game, std::vector<Move>& moves) const;
 };
 

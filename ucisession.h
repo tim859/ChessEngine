@@ -2,6 +2,7 @@
 #define CHESS_UCI_H
 #include "game.h"
 #include "engine.h"
+#include <condition_variable>
 #include <iostream>
 #include <mutex>
 #include <thread>
@@ -28,12 +29,16 @@ class UCISession {
     Game game;
     Engine engine;
     UCISettings uciSettings;
+    std::mutex searchMutex;
+    std::condition_variable_any searchStateChanged;
     std::jthread engineThread;
     std::jthread completionThread;
-    std::mutex engineMoveMutex;
     std::optional<Move> pendingEngineMove;
 
 public:
+    UCISession();
+    ~UCISession();
+
     void uci() const;
     void debug(bool debugCommand);
     void isReady() const;
@@ -44,6 +49,9 @@ public:
     void stop();
 
 private:
+    void monitorSearchCompletion(const std::stop_token& stopToken);
+    void requestEngineStop();
+    void waitForSearchToBecomeIdle();
     [[nodiscard]] std::string convertGameStateMoveToUCIMove(const Move& move) const;
 };
 

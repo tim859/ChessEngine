@@ -1,4 +1,6 @@
 #include "engine.h"
+
+#include <algorithm>
 #include <random>
 #include <iostream>
 
@@ -8,12 +10,15 @@ void Engine::reset() {
 
 Move Engine::generateEngineMove(const Game& game, const EngineSearchSettings& engineSearchSettings, const std::stop_token& stopToken) {
     // TODO: implement all the engine search settings into the search
-    // TODO: allow the search to be cancelled early and return the best move found so far
     // call searchMoves with a simulated gamestate that mirrors the current gamestate
     auto simulatedGame = game;
-    bestMove = game.generateAllLegalMoves(simulatedGame.getCurrentGameState()).front();
+    const auto allLegalMoves = game.generateAllLegalMoves(simulatedGame.getCurrentGameState());
+    if (allLegalMoves.empty())
+        return Move({0, 0}, {0, 0});
+    bestMove = allLegalMoves.front();
     movesSearched = 0;
-    alphaBetaSearch(simulatedGame ,minusInfinity, infinity, 5, 5);
+    const int searchDepth = engineSearchSettings.depth.value_or(5);
+    alphaBetaSearch(simulatedGame, minusInfinity, infinity, searchDepth, searchDepth, stopToken);
     std::cout << "moves searched: " << movesSearched << std::endl;
     return bestMove;
 }
@@ -107,7 +112,10 @@ std::vector<Move> Engine::generatePerftMoves(const Game& game) const {
     return perftMoves;
 }
 
-int Engine::alphaBetaSearch(Game& game, int alpha, const int beta, const int depthLeft, const int initialDepth) {
+int Engine::alphaBetaSearch(Game& game, int alpha, const int beta, const int depthLeft, const int initialDepth, const std::stop_token& stopToken) {
+    if (stopToken.stop_requested())
+        return alpha;
+
     if (depthLeft == 0)
         // TODO: implement quiescent function
         return evaluateBoardPosition(game.getCurrentGameState());
@@ -122,10 +130,14 @@ int Engine::alphaBetaSearch(Game& game, int alpha, const int beta, const int dep
     orderMoves(game, moves);
 
     for (auto& move : moves) {
+        if (stopToken.stop_requested())
+            return alpha;
+
         // engine will always promote a pawn to a queen for the time being
-        move.promotionPieceType = Piece::Type::QUEEN;
+        if (game.checkForPawnPromotionOnNextMove(game.getCurrentGameState(), move))
+            move.promotionPieceType = Piece::Type::QUEEN;
         game.movePiece(game.getCurrentGameState(), move, game.getCurrentGameStateHistory());
-        const int evaluation = -alphaBetaSearch(game, -beta, -alpha, depthLeft - 1, initialDepth);
+        const int evaluation = -alphaBetaSearch(game, -beta, -alpha, depthLeft - 1, initialDepth, stopToken);
         game.undoLastMove(game.getCurrentGameState(), game.getCurrentGameStateHistory());
         ++movesSearched;
 

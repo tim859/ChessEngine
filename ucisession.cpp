@@ -3,6 +3,31 @@
 #include <algorithm>
 #include <charconv>
 
+UCISession::UCISession() {
+    completionThread = std::jthread([this](const std::stop_token& stopToken) {
+        monitorSearchCompletion(stopToken);
+    });
+}
+
+UCISession::~UCISession() {
+    requestEngineStop();
+    completionThread.request_stop();
+    searchStateChanged.notify_all();
+
+    if (completionThread.joinable())
+        completionThread.join();
+
+    std::jthread remainingEngineThread;
+    {
+        std::scoped_lock lock(searchMutex);
+        remainingEngineThread = std::move(engineThread);
+        pendingEngineMove.reset();
+    }
+
+    if (remainingEngineThread.joinable())
+        remainingEngineThread.join();
+}
+
 void UCISession::uci() const {
     std::cout << "id name " << uciSettings.name << std::endl;
     std::cout << "id author " << uciSettings.author << std::endl;
@@ -25,24 +50,35 @@ bool UCISession::setOption(const SetOptionCommand& setOptionCommand) const {
 }
 
 void UCISession::uciNewGame() {
+    requestEngineStop();
+    waitForSearchToBecomeIdle();
     engine.reset();
     game.reset();
 }
 
 bool UCISession::position(const PositionCommand& positionCommand) {
-    if (!game.populateGameStateFromFEN(game.getCurrentGameState(), game.getCurrentGameStateHistory(), positionCommand.fen))
-        return false;
+    requestEngineStop();
+    waitForSearchToBecomeIdle();
 
+    // check for position and move validity on a fresh game before changing the actual game
+    Game updatedGame;
+    if (!updatedGame.populateGameStateFromFEN(updatedGame.getCurrentGameState(), updatedGame.getCurrentGameStateHistory(), positionCommand.fen))
+        return false;
     for (const auto& move : positionCommand.moves) {
-        if (!game.checkIsMoveLegal(game.getCurrentGameState(), move))
+        if (!updatedGame.checkIsMoveLegal(updatedGame.getCurrentGameState(), move))
             return false;
-        game.movePiece(game.getCurrentGameState(), move, game.getCurrentGameStateHistory());
+        updatedGame.movePiece(updatedGame.getCurrentGameState(), move, updatedGame.getCurrentGameStateHistory());
     }
+
+    // copy the updated game to game
+    game = updatedGame;
     return true;
 }
 
 void UCISession::go(const GoCommand& goCommand) {
-    stop();
+    requestEngineStop();
+    waitForSearchToBecomeIdle();
+
     if (goCommand.perft) {
         // autoperft sends "go perft <depth>" and expects divide-style output followed by a final node count line.
         std::uint64_t totalNodes = 0;
@@ -60,32 +96,25 @@ void UCISession::go(const GoCommand& goCommand) {
 
     // search uses a snapshot so later UCI commands cannot mutate the position out from under the worker thread.
     const Game gameSnapshot = game;
-    const EngineSearchSettings& engineSearchSettings = goCommand;
+    const EngineSearchSettings engineSearchSettings = goCommand;
 
-    engineThread = std::jthread([this, gameSnapshot, engineSearchSettings](const std::stop_token& stopToken) {
-        // the engine thread only computes the move and stores it; ucisession is responsible for printing it.
-        Move move = engine.generateEngineMove(gameSnapshot, engineSearchSettings, stopToken);
-        std::scoped_lock lock(engineMoveMutex);
-        pendingEngineMove = move;
-    });
+    {
+        std::scoped_lock lock(searchMutex);
+        pendingEngineMove.reset();
+        engineThread = std::jthread([this, gameSnapshot, engineSearchSettings](const std::stop_token& stopToken) {
+            // the engine thread only computes the move and stores it; ucisession is responsible for printing it.
+            Move move = engine.generateEngineMove(gameSnapshot, engineSearchSettings, stopToken);
+            {
+                std::scoped_lock lock(searchMutex);
+                pendingEngineMove = move;
+            }
+            searchStateChanged.notify_all();
+        });
+    }
 }
 
 void UCISession::stop() {
-    // stop the engine search
-    if (engineThread.joinable()) {
-        engineThread.request_stop();
-        engineThread.join();
-        // return the best move found so far
-        if (pendingEngineMove) {
-            std::scoped_lock lock(engineMoveMutex);
-            std::cout << "bestmove " << convertGameStateMoveToUCIMove(*pendingEngineMove) << std::endl;
-            pendingEngineMove = std::nullopt;
-        }
-        else {
-            // purely for debugging, delete later
-            std::cerr << "no bestmove found" << std::endl;
-        }
-    }
+    requestEngineStop();
 }
 
 std::string UCISession::convertGameStateMoveToUCIMove(const Move& move) const {
@@ -114,4 +143,46 @@ std::string UCISession::convertGameStateMoveToUCIMove(const Move& move) const {
         }
     }
     return uciMove;
+}
+
+void UCISession::monitorSearchCompletion(const std::stop_token& stopToken) {
+    std::unique_lock lock(searchMutex);
+
+    while (!stopToken.stop_requested()) {
+        searchStateChanged.wait(lock, stopToken, [this] {
+            return pendingEngineMove.has_value();
+        });
+
+        if (stopToken.stop_requested())
+            break;
+
+        const Move completedMove = *pendingEngineMove;
+        pendingEngineMove.reset();
+
+        std::jthread completedEngineThread = std::move(engineThread);
+        lock.unlock();
+
+        if (completedEngineThread.joinable())
+            completedEngineThread.join();
+
+        std::cout << "bestmove " << convertGameStateMoveToUCIMove(completedMove) << std::endl;
+        searchStateChanged.notify_all();
+        lock.lock();
+    }
+}
+
+void UCISession::requestEngineStop() {
+    {
+        std::scoped_lock lock(searchMutex);
+        if (engineThread.joinable())
+            engineThread.request_stop();
+    }
+    searchStateChanged.notify_all();
+}
+
+void UCISession::waitForSearchToBecomeIdle() {
+    std::unique_lock lock(searchMutex);
+    searchStateChanged.wait(lock, [this] {
+        return !engineThread.joinable() && !pendingEngineMove.has_value();
+    });
 }
