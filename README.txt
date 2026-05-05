@@ -1,0 +1,1 @@
+note: if editing this project in CLion, after cloning the repo open CMakeLists.txt directly in the IDE before any other file to ensure CLion properly registers the project as a CMake project and not as a generic C++ project.
