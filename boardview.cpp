@@ -1,4 +1,6 @@
 #include "boardview.h"
+
+#include <cmath>
 #include <iostream>
 
 BoardView::BoardView() {
@@ -131,7 +133,7 @@ void BoardView::placePieceOnBoard(const bool pieceMoved, Vector2Int endSquare) {
 
 Vector2Int BoardView::getSquare(const int mouseX, const int mouseY) const {
     // compute the square of the board that the mouse cursor is over
-    return {std::clamp(static_cast<int>(floor(mouseX / squareSize)), 0, 7), std::clamp(static_cast<int>(floor(mouseY / squareSize)), 0, 7)};
+    return {std::clamp(static_cast<int>(std::floor(mouseX / squareSize)), 0, 7), std::clamp(static_cast<int>(std::floor(mouseY / squareSize)), 0, 7)};
 }
 
 const sf::Texture& BoardView::GetPieceTexture(const Piece piece) const {

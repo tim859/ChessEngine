@@ -448,8 +448,12 @@ bool Game::checkIsMoveValid(const GameState& gameState, const Move& move) const 
     if (move.startSquare == move.endSquare || move.endSquare.x < 0 || move.endSquare.x > 7 || move.endSquare.y < 0 || move.endSquare.y > 7)
         return false;
 
-    // check end square is either empty or contains an enemy piece
+    // check end square is either empty or contains an enemy piece.
+    // kings are never capturable in chess; mate must be represented by "no legal replies while in check",
+    // not by allowing a move onto the enemy king's square.
     if (gameState.boardPosition[move.endSquare.y][move.endSquare.x]) {
+        if (gameState.boardPosition[move.endSquare.y][move.endSquare.x]->type == Piece::Type::KING)
+            return false;
         if (gameState.boardPosition[move.endSquare.y][move.endSquare.x]->colour == movePiece.colour)
             return false;
     }
@@ -803,7 +807,7 @@ bool Game::checkForPawnPromotionOnNextMove(const GameState& gameState, const Mov
     return move.endSquare.y == 7;
 }
 
-std::vector<Move> Game::generateAllLegalMoves(const GameState& gameState) const {
+std::vector<Move> Game::generateAllLegalMoves(const GameState& gameState, bool capturesOnly) const {
     // generate all possible pseudo legal moves first then filter by actual legal moves
     // this reduces computation as unnecessarily simulating game states is more expensive than unnecessarily checking for pseudo legal moves
     std::vector<Move> validMoves;
@@ -823,8 +827,14 @@ std::vector<Move> Game::generateAllLegalMoves(const GameState& gameState) const 
     }
     std::vector<Move> legalMoves;
     for (const auto& move : validMoves) {
-        if (checkIsMoveLegal(gameState, move))
-            legalMoves.emplace_back(move);
+        if (!checkIsMoveLegal(gameState, move))
+            continue;
+
+        const auto isCapture = gameState.boardPosition[move.endSquare.y][move.endSquare.x].has_value() || checkForEnPassantTake(gameState, move);
+        if (capturesOnly && !isCapture)
+            continue;
+
+        legalMoves.emplace_back(move);
     }
     return legalMoves;
 }

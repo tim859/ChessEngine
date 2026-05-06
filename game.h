@@ -168,7 +168,7 @@ public:
     [[nodiscard]] bool checkIsKingInCheck(const GameState& gameState, Piece::Colour kingColour) const;
     [[nodiscard]] bool checkForPawnPromotionOnLastMove(const GameState& gameState) const;
     [[nodiscard]] bool checkForPawnPromotionOnNextMove(const GameState& gameState, const Move& move) const;
-    [[nodiscard]] std::vector<Move> generateAllLegalMoves(const GameState& gameState) const;
+    [[nodiscard]] std::vector<Move> generateAllLegalMoves(const GameState& gameState, bool capturesOnly = false) const;
 };
 
 #endif //CHESS_GAME_H
