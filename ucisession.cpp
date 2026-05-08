@@ -67,7 +67,10 @@ bool UCISession::position(const PositionCommand& positionCommand) {
     for (const auto& move : positionCommand.moves) {
         if (!updatedGame.checkIsMoveLegal(updatedGame.getCurrentGameState(), move))
             return false;
-        updatedGame.movePiece(updatedGame.getCurrentGameState(), move, updatedGame.getCurrentGameStateHistory());
+        // movePiece no longer manages history; push the pre-move snapshot here so the engine can
+        // still see the full game history for any future history-dependent logic.
+        updatedGame.getCurrentGameStateHistory().emplace_back(updatedGame.getCurrentGameState());
+        updatedGame.movePiece(updatedGame.getCurrentGameState(), move);
     }
 
     // copy the updated game to game
