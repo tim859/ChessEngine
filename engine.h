@@ -30,7 +30,7 @@ private:
     [[nodiscard]] float calculateEndgameWeight(const GameState& gameState) const;
     void orderMoves (const Game& game, std::vector<Move>& moves) const;
     int search(Game& game, int alpha, int beta, int depthLeft, int initialDepth, int plyFromRoot, const std::stop_token& stopToken);
-    int searchAllCaptures(Game& game, int alpha, int beta, int plyFromRoot);
+    int quiescenceSearch(Game& game, int alpha, int beta, int plyFromRoot);
 
     // performance testing
     [[nodiscard]] std::uint64_t perft(Game& game, int depth) const;

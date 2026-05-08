@@ -10,16 +10,45 @@ void Engine::reset() {
 
 Move Engine::generateEngineMove(const Game& game, const EngineSearchSettings& engineSearchSettings, const std::stop_token& stopToken) {
     // TODO: implement all the engine search settings into the search
-    // call searchMoves with a simulated gamestate that mirrors the current gamestate
     auto simulatedGame = game;
     const auto allLegalMoves = game.generateAllLegalMoves(simulatedGame.getCurrentGameState());
     if (allLegalMoves.empty())
         return Move({0, 0}, {0, 0});
+
+    // seed bestMove with any legal move so we always have something to return,
+    // even if depth 1 is interrupted before completing
     bestMove = allLegalMoves.front();
+    Move bestMoveFromLastCompletedIteration = bestMove;
     movesSearched = 0;
-    const int searchDepth = engineSearchSettings.depth.value_or(4);
-    search(simulatedGame, minusInfinity, infinity, searchDepth, searchDepth, 0, stopToken);
-    std::cout << "moves searched: " << movesSearched << std::endl;
+
+    const int maxSearchDepth = engineSearchSettings.depth.value_or(5);
+
+    // iterative deepening: search progressively deeper, using the best move from the previous
+    // iteration as the first move tried in the next iteration. this dramatically improves
+    // alpha-beta cutoffs because the previous iteration's best is very likely still best.
+    // it also gives anytime behaviour: if stop is requested partway through, we still have
+    // a fully-searched best move from the last completed iteration to return.
+    for (int currentDepth = 1; currentDepth <= maxSearchDepth; ++currentDepth) {
+        if (stopToken.stop_requested())
+            break;
+
+        const int evaluation = search(simulatedGame, minusInfinity, infinity, currentDepth, currentDepth, 0, stopToken);
+
+        // if the iteration was cut short, its bestMove update is unreliable; revert to the previous one
+        if (stopToken.stop_requested()) {
+            bestMove = bestMoveFromLastCompletedIteration;
+            break;
+        }
+
+        bestMoveFromLastCompletedIteration = bestMove;
+        std::cout << "depth " << currentDepth << " complete, eval: " << evaluation << ", moves searched so far: " << movesSearched << std::endl;
+
+        // forced mate detected — searching deeper cannot improve the outcome
+        if (evaluation >= infinity - 1000 || evaluation <= minusInfinity + 1000)
+            break;
+    }
+
+    std::cout << "total moves searched: " << movesSearched << std::endl;
     return bestMove;
 }
 
@@ -34,9 +63,9 @@ std::vector<std::pair<Move, std::uint64_t>> Engine::generatePerftDivide(const Ga
     divide.reserve(moves.size());
     for (const auto& move : moves) {
         // play one legal root move, count the subtree below it, then restore the snapshot for the next root move.
-        simulatedGame.movePiece(simulatedGame.getCurrentGameState(), move, simulatedGame.getCurrentGameStateHistory());
+        const auto moveDelta = simulatedGame.movePiece(simulatedGame.getCurrentGameState(), move);
         const std::uint64_t nodes = perft(simulatedGame, depth - 1);
-        simulatedGame.undoLastMove(simulatedGame.getCurrentGameState(), simulatedGame.getCurrentGameStateHistory());
+        simulatedGame.undoLastMove(simulatedGame.getCurrentGameState(), moveDelta);
         // keep the original move paired with its subtree size so UCISession can print "move: nodes" lines.
         divide.emplace_back(move, nodes);
     }
@@ -166,7 +195,8 @@ int Engine::search(Game& game, int alpha, const int beta, const int depthLeft, c
         return alpha;
 
     if (depthLeft == 0)
-        return searchAllCaptures(game, alpha, beta, plyFromRoot);
+        //return evaluateBoardPosition(game.getCurrentGameState());
+        return quiescenceSearch(game, alpha, beta, plyFromRoot);
 
     auto moves = game.generateAllLegalMoves(game.getCurrentGameState());
     if (moves.empty()) {
@@ -177,6 +207,17 @@ int Engine::search(Game& game, int alpha, const int beta, const int depthLeft, c
 
     orderMoves(game, moves);
 
+    // at the root, promote the best move from the previous iterative-deepening iteration
+    // to the very front of the move list. this is by far the most impactful move-ordering
+    // hint we have at the root and is what makes ID a net speedup rather than just overhead.
+    if (depthLeft == initialDepth) {
+        const auto previousBest = std::ranges::find_if(moves, [this](const Move& move) {
+            return move.startSquare == bestMove.startSquare && move.endSquare == bestMove.endSquare && move.promotionPieceType == bestMove.promotionPieceType;
+        });
+        if (previousBest != moves.end() && previousBest != moves.begin())
+            std::rotate(moves.begin(), previousBest, previousBest + 1);
+    }
+
     for (auto& move : moves) {
         if (stopToken.stop_requested())
             return alpha;
@@ -184,9 +225,9 @@ int Engine::search(Game& game, int alpha, const int beta, const int depthLeft, c
         // engine will always promote a pawn to a queen for the time being
         if (game.checkForPawnPromotionOnNextMove(game.getCurrentGameState(), move))
             move.promotionPieceType = Piece::Type::QUEEN;
-        game.movePiece(game.getCurrentGameState(), move, game.getCurrentGameStateHistory());
+        const auto moveDelta = game.movePiece(game.getCurrentGameState(), move);
         const int evaluation = -search(game, -beta, -alpha, depthLeft - 1, initialDepth, plyFromRoot + 1, stopToken);
-        game.undoLastMove(game.getCurrentGameState(), game.getCurrentGameStateHistory());
+        game.undoLastMove(game.getCurrentGameState(), moveDelta);
         ++movesSearched;
 
         if (evaluation > alpha) {
@@ -196,25 +237,28 @@ int Engine::search(Game& game, int alpha, const int beta, const int depthLeft, c
         }
 
         // the last move was too good, the opponent won't allow this position to be reached (by playing a different move earlier on)
-        // skip remaining moves
+        // skip remaining moves/prune branch
         if (evaluation >= beta)
             return beta;
     }
     return alpha;
 }
 
-int Engine::searchAllCaptures(Game& game, int alpha, const int beta, const int plyFromRoot) {
+int Engine::quiescenceSearch(Game& game, int alpha, const int beta, const int plyFromRoot) {
     const auto legalMoves = game.generateAllLegalMoves(game.getCurrentGameState());
+
+    // handle checkmate and stalemate
     if (legalMoves.empty()) {
         if (game.checkIsKingInCheck(game.getCurrentGameState(), game.getCurrentGameState().moveColour))
+            // checkmate found, use plyFromRoot to prioritise faster mates when winning and slower mates when losing
             return minusInfinity + plyFromRoot;
+        // stalemate found
         return 0;
     }
 
-    const bool sideToMoveInCheck = game.checkIsKingInCheck(game.getCurrentGameState(), game.getCurrentGameState().moveColour);
+    const auto sideToMoveInCheck = game.checkIsKingInCheck(game.getCurrentGameState(), game.getCurrentGameState().moveColour);
 
-    // captures typically aren't forced so see what the evaluation is before making a capture
-    // otherwise if only bad captures are available, the position will be evaluated as bad, even if good non capturing moves exist
+    // static evaluation (stand pat)
     auto evaluation = evaluateBoardPosition(game.getCurrentGameState());
     if (!sideToMoveInCheck) {
         if (evaluation >= beta)
@@ -222,13 +266,16 @@ int Engine::searchAllCaptures(Game& game, int alpha, const int beta, const int p
         alpha = std::max(alpha, evaluation);
     }
 
+    // if in check then must search every move to find every possible evasion
+    // if not in check then can rely on stand pat and only search captures/tactical moves
     auto moves = sideToMoveInCheck ? legalMoves : game.generateAllLegalMoves(game.getCurrentGameState(), true);
     orderMoves(game, moves);
 
+    // same negamax recursive search with alpha beta pruning as the one in the main search function
     for (auto& move : moves) {
-        game.movePiece(game.getCurrentGameState(), move, game.getCurrentGameStateHistory());
-        evaluation = -searchAllCaptures(game, -beta, -alpha, plyFromRoot + 1);
-        game.undoLastMove(game.getCurrentGameState(), game.getCurrentGameStateHistory());
+        const auto moveDelta = game.movePiece(game.getCurrentGameState(), move);
+        evaluation = -quiescenceSearch(game, -beta, -alpha, plyFromRoot + 1);
+        game.undoLastMove(game.getCurrentGameState(), moveDelta);
 
         if (evaluation >= beta)
             return beta;
@@ -253,9 +300,9 @@ std::uint64_t Engine::perft(Game& game, const int depth) const {
     std::uint64_t nodes = 0;
     for (const auto& move : moves) {
         // standard recursive perft flow: make move, count descendants, then undo before trying the next sibling.
-        game.movePiece(game.getCurrentGameState(), move, game.getCurrentGameStateHistory());
+        const auto moveDelta = game.movePiece(game.getCurrentGameState(), move);
         nodes += perft(game, depth - 1);
-        game.undoLastMove(game.getCurrentGameState(), game.getCurrentGameStateHistory());
+        game.undoLastMove(game.getCurrentGameState(), moveDelta);
     }
     return nodes;
 }
