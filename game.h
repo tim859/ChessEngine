@@ -75,6 +75,20 @@ struct Move {
     int score = 0;
 };
 
+// records the minimum information needed to reverse a single movePiece() call.
+// search uses this for cheap make/unmake instead of snapshotting the whole gameState.
+struct MoveDelta {
+    Move move{};
+    std::optional<Piece> capturedPiece;
+    Vector2Int capturedPieceSquare{};
+    bool wasPromotion = false;
+    int castleRookIndex = 0;
+    std::optional<Vector2Int> previousEnPassantSquare;
+    int previousMovesSinceEnPassant = 0;
+    std::array<bool, 2> previousWhiteCastleRights{};
+    std::array<bool, 2> previousBlackCastleRights{};
+};
+
 struct GameState {
     std::optional<Piece> selectedPiece;
     std::optional<Vector2Int> selectedPieceStartSquare;
@@ -145,11 +159,10 @@ public:
 
     void reset();
     bool populateGameStateFromFEN(GameState& gameState, std::vector<GameState>& gameStateHistory, const std::string& fen) const;
-    // TODO: remove pickupPieceFromBoard and placePieceOnBoard, all the logic they contained has been moved to movePiece and they now do almost nothing
     bool pickupPieceFromBoard(GameState& gameState, Vector2Int startSquare) const;
     GameTypes::MoveType placePieceOnBoard(GameState& gameState, Vector2Int endSquare, std::vector<GameState>& gameStateHistory, const Piece* pawnPromotionChoice) const;
-    GameTypes::MoveType movePiece(GameState& gameState, const Move& move, std::vector<GameState>& gameStateHistory) const;
-    void undoLastMove(GameState& gameState, std::vector<GameState>& gameStateHistory) const;
+    MoveDelta movePiece(GameState& gameState, const Move& move) const;
+    void undoLastMove(GameState& gameState, const MoveDelta& moveDelta) const;
     void updateCastlingRights(GameState& gameState, const Move &move) const;
     void castleRook(GameState& gameState, int rook) const;
 

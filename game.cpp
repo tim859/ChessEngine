@@ -225,7 +225,7 @@ bool Game::pickupPieceFromBoard(GameState& gameState, const Vector2Int startSqua
     return true;
 }
 
-// TODO: this function is tightly coupled to main.cpp, it can be only used from main.cpp currently, all other classes that want to move pieces have to manually call checkIsMoveLegal() first.
+// TODO: this function is only used for ChessGUI, not ChessUCI. It can be only used from main.cpp currently, all other classes that want to move pieces have to manually call checkIsMoveLegal() first.
 // TODO: it needs to be rewritten to be more clear about what its actually doing and to make it available to other classes if necessary.
 GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2Int endSquare, std::vector<GameState>& gameStateHistory, const Piece* pawnPromotionChoice) const {
     auto moveType = GameTypes::MoveType::NONE;
@@ -238,13 +238,34 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2I
 
     // determine if piece can move to this square and move it if so
     auto move = Move(gameState.selectedPieceStartSquare.value(), endSquare);
+    // moveDelta is populated only when the move was legal and applied. it carries everything
+    // needed to derive moveType post-hoc (capture / castle / promotion attribution).
+    std::optional<MoveDelta> moveDelta;
     if (checkIsMoveLegal(gameState, move)) {
         if (pawnPromotionChoice)
             move.promotionPieceType = pawnPromotionChoice->type;
-        moveType = movePiece(gameState, move, gameStateHistory);
+        // GUI code maintains the full gameStateHistory for threefold repetition;
+        // push the pre-move snapshot before mutating gameState.
+        gameStateHistory.emplace_back(gameState);
+        moveDelta = movePiece(gameState, move);
     }
 
-    // TODO: need to find a way to put this check back in movePiece without triggering a stack overflow, otherwise it wont know if the game is over when it is
+    // derive moveType from the delta. the order matters: castling and promotion are more specific
+    // than "regular capture" and override it, and CHECK overrides everything below.
+    if (moveDelta) {
+        if (moveDelta->castleRookIndex > 0)
+            moveType = GameTypes::MoveType::CASTLE;
+        else if (moveDelta->wasPromotion)
+            moveType = GameTypes::MoveType::PROMOTEPAWN;
+        else if (moveDelta->capturedPiece)
+            moveType = GameTypes::MoveType::CAPTURE;
+        else
+            moveType = GameTypes::MoveType::MOVESELF;
+    }
+
+    if (checkIsKingInCheck(gameState, gameState.moveColour))
+        moveType = GameTypes::MoveType::CHECK;
+
     // check for stalemate and checkmate
     if (generateAllLegalMoves(gameState).empty()) {
         moveType = GameTypes::MoveType::GAMEOVER;
@@ -258,16 +279,54 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2I
             gameState.gameOverType = GameTypes::GameOverType::STALEMATE;
     }
 
+    // check for how many times this gamestate (specifically board position) has appeared, if it is 3 or more then the game is drawn by threefold repetition
+    auto gameStateFrequency = 0;
+    for (const auto& previousGameState : gameStateHistory) {
+        if (gameState == previousGameState) {
+            ++gameStateFrequency;
+            if (gameStateFrequency >= 3) {
+                moveType = GameTypes::MoveType::GAMEOVER;
+                gameState.gameOverType = GameTypes::GameOverType::TFRDRAW;
+            }
+        }
+    }
+
+    // check for 50 full moves/100 half moves since a piece capture or a pawn moving aka the 50 move draw.
+    // note: the moveType variable can be overridden to CHECK/GAMEOVER above, so we read attribution
+    // from the moveDelta directly rather than from moveType. wasPromotion counts as a pawn move
+    // even though the post-move endSquare no longer holds a pawn.
+    const auto& endSquarePiece = gameState.boardPosition[move.endSquare.y][move.endSquare.x];
+    const bool wasCapture = moveDelta && moveDelta->capturedPiece.has_value();
+    const bool wasPawnMove = moveDelta && (moveDelta->wasPromotion
+                                           || (endSquarePiece.has_value() && endSquarePiece->type == Piece::Type::PAWN));
+    if (wasCapture || wasPawnMove)
+        gameState.halfMovesSinceLastActiveMove = 0;
+    else {
+        ++gameState.halfMovesSinceLastActiveMove;
+        if (gameState.halfMovesSinceLastActiveMove >= 100) {
+            moveType = GameTypes::MoveType::GAMEOVER;
+            gameState.gameOverType = GameTypes::GameOverType::FIFTYMOVEDRAW;
+        }
+    }
+
     gameState.selectedPieceStartSquare = std::nullopt;
     gameState.selectedPiece = std::nullopt;
     return moveType;
 }
 
-GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std::vector<GameState>& gameStateHistory) const {
-    auto moveType = GameTypes::MoveType::NONE;
+MoveDelta Game::movePiece(GameState& gameState, const Move& move) const {
     const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
 
-    gameStateHistory.emplace_back(gameState);
+    // record everything needed to reverse this move, before any state mutates.
+    // capturedPiece is filled in by the EP / regular-capture branches below.
+    MoveDelta moveDelta;
+    moveDelta.move = move;
+    moveDelta.previousEnPassantSquare = gameState.enPassantSquare;
+    moveDelta.previousMovesSinceEnPassant = gameState.movesSinceEnPassant;
+    moveDelta.previousWhiteCastleRights = gameState.whiteCastleRights;
+    moveDelta.previousBlackCastleRights = gameState.blackCastleRights;
+    // en passant can override this below
+    moveDelta.capturedPieceSquare = move.endSquare;
 
     // ---------- en passant ---------------
 
@@ -278,13 +337,22 @@ GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std:
         gameState.movesSinceEnPassant = 0;
     }
 
-    // check for enpassant take and if returns true, remove the appropriate pawn from the board
+    // capture detection happens BEFORE the moving piece overwrites the destination, so we can
+    // still see what was there. en passant captures live on a different square from move.endSquare,
+    // so capturedPieceSquare is tracked separately for correct undo.
     if (checkForEnPassantTake(gameState, move)) {
         // colour of the pawn to be taken will be the opposite of the current move colour
         // therefore we can get the forward direction of the other colour and use it to find the square with the pawn to be taken on it
         const auto enemyForwardStep = gameState.moveColour == Piece::Colour::WHITE ? 1 : -1;
-        gameState.boardPosition[gameState.enPassantSquare->y + enemyForwardStep][gameState.enPassantSquare->x] = std::nullopt;
-        moveType = GameTypes::MoveType::CAPTURE;
+        const auto capturedSquare = Vector2Int(gameState.enPassantSquare->x, gameState.enPassantSquare->y + enemyForwardStep);
+        moveDelta.capturedPiece = gameState.boardPosition[capturedSquare.y][capturedSquare.x];
+        moveDelta.capturedPieceSquare = capturedSquare;
+        gameState.boardPosition[capturedSquare.y][capturedSquare.x] = std::nullopt;
+    }
+    else if (gameState.boardPosition[move.endSquare.y][move.endSquare.x]) {
+        // regular capture - the piece on the end square will be overwritten when we place the moving piece there.
+        // capturedPieceSquare is already move.endSquare from the default above.
+        moveDelta.capturedPiece = gameState.boardPosition[move.endSquare.y][move.endSquare.x];
     }
 
     // allow one move before en passant is no longer available
@@ -298,72 +366,82 @@ GameTypes::MoveType Game::movePiece(GameState& gameState, const Move& move, std:
     }
 
     // ----------------- castling --------------------
+
     // check for castle and if returns true move the rook on the board
     // 0 = no rook needs castling, 1 = white queenside rook, 2 = white kingside rook, 3 = black queenside rook, 4 = black kingside rook
     if (const auto rookIndex = checkForCastle(gameState, move); rookIndex > 0) {
         castleRook(gameState, rookIndex);
-        moveType = GameTypes::MoveType::CASTLE;
+        moveDelta.castleRookIndex = rookIndex;
     }
     updateCastlingRights(gameState, move);
 
-    if (moveType == GameTypes::MoveType::NONE) {
-        if (gameState.boardPosition[move.endSquare.y][move.endSquare.x])
-            moveType = GameTypes::MoveType::CAPTURE;
-        else
-            moveType = GameTypes::MoveType::MOVESELF;
-    }
+    // ----------------- moving the piece --------------------
 
-    // remove the piece from the start square
+    // if a pawn is being promoted, place the requested promotion piece on the end square
+    if (checkForPawnPromotionOnNextMove(gameState, move) && move.promotionPieceType) {
+        gameState.boardPosition[move.endSquare.y][move.endSquare.x] = Piece(*move.promotionPieceType, movePiece.colour);
+        moveDelta.wasPromotion = true;
+    }
+    // otherwise place the move piece on the end square, overwriting/capturing any enemy piece already there
+    else
+        gameState.boardPosition[move.endSquare.y][move.endSquare.x] = movePiece;
+
+    // remove the move piece from the start square
     gameState.boardPosition[move.startSquare.y][move.startSquare.x] = std::nullopt;
-    // move the piece to the end square, any enemy piece that was on the end square will be overwritten/taken
-    gameState.boardPosition[move.endSquare.y][move.endSquare.x] = movePiece;
+    // toggle move colour
     gameState.moveColour = gameState.moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE;
+    // update move counters
     ++gameState.halfMoveCounter;
     if (gameState.halfMoveCounter % 2 == 0)
         ++gameState.fullMoveCounter;
 
-    // check to see if a pawn has reached the other side and can be promoted
-    if (checkForPawnPromotionOnLastMove(gameState) && move.promotionPieceType) {
-        gameState.boardPosition[move.endSquare.y][move.endSquare.x] = Piece(*move.promotionPieceType, movePiece.colour);
-        moveType = GameTypes::MoveType::PROMOTEPAWN;
-    }
-
-    if (checkIsKingInCheck(gameState, gameState.moveColour))
-        moveType = GameTypes::MoveType::CHECK;
-
-    // check for how many times this gamestate (specifically board position) has appeared, if it is 3 or more then the game is drawn by threefold repetition
-    auto gameStateFrequency = 0;
-    for (const auto& previousGameState : gameStateHistory) {
-        if (gameState == previousGameState) {
-            ++gameStateFrequency;
-            if (gameStateFrequency >= 3) {
-                moveType = GameTypes::MoveType::GAMEOVER;
-                gameState.gameOverType = GameTypes::GameOverType::TFRDRAW;
-            }
-        }
-    }
-
-    // check for 50 moves since a piece capture or a pawn moving aka the 50 move draw
-    if (moveType == GameTypes::MoveType::CAPTURE || gameState.boardPosition[move.endSquare.y][move.endSquare.x].value().type == Piece::Type::PAWN)
-        gameState.halfMovesSinceLastActiveMove = 0;
-    else {
-        ++gameState.halfMovesSinceLastActiveMove;
-        if (gameState.halfMovesSinceLastActiveMove >= 50) {
-            moveType = GameTypes::MoveType::GAMEOVER;
-            gameState.gameOverType = GameTypes::GameOverType::FIFTYMOVEDRAW;
-        }
-    }
-    return moveType;
+    return moveDelta;
 }
 
-void Game::undoLastMove(GameState& gameState, std::vector<GameState>& gameStateHistory) const {
-    if (gameStateHistory.size() < 2) {
-        std::cerr << "Cannot undo last move - no history" << std::endl;
-        return;
+void Game::undoLastMove(GameState& gameState, const MoveDelta& moveDelta) const {
+    const auto& move = moveDelta.move;
+
+    // toggle move colour back first so any colour-dependent restoration below sees the original mover's colour.
+    gameState.moveColour = gameState.moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE;
+
+    // reverse the move counters. fullMoveCounter was incremented if the post-move halfMoveCounter is even.
+    if (gameState.halfMoveCounter % 2 == 0)
+        --gameState.fullMoveCounter;
+    --gameState.halfMoveCounter;
+
+    // restore the piece on the start square. for promotions the piece on endSquare is the promoted piece, so put a pawn back instead of copying.
+    if (moveDelta.wasPromotion)
+        gameState.boardPosition[move.startSquare.y][move.startSquare.x] = Piece(Piece::Type::PAWN, gameState.moveColour);
+    else
+        gameState.boardPosition[move.startSquare.y][move.startSquare.x] = gameState.boardPosition[move.endSquare.y][move.endSquare.x];
+
+    // clear the end square, for regular captures the captured-piece restore below will refill it.
+    gameState.boardPosition[move.endSquare.y][move.endSquare.x] = std::nullopt;
+
+    // restore captured piece. for regular captures capturedPieceSquare == endSquare, for en passant it's one rank away.
+    if (moveDelta.capturedPiece)
+        gameState.boardPosition[moveDelta.capturedPieceSquare.y][moveDelta.capturedPieceSquare.x] = moveDelta.capturedPiece;
+
+    // undo the castling rook move - castleRook moved the rook from its corner to its castle-end square; reverse it.
+    if (moveDelta.castleRookIndex > 0) {
+        // {rookStartSquare, rookEndSquare} keyed by castleRookIndex - 1, mirroring castleRook's table.
+        constexpr std::array<std::pair<Vector2Int, Vector2Int>, 4> castleRookEndpoints{{
+            {Vector2Int{0, 7}, Vector2Int{3, 7}},  // white queenside
+            {Vector2Int{7, 7}, Vector2Int{5, 7}},  // white kingside
+            {Vector2Int{0, 0}, Vector2Int{3, 0}},  // black queenside
+            {Vector2Int{7, 0}, Vector2Int{5, 0}}   // black kingside
+        }};
+        const auto rookArrayIndex = moveDelta.castleRookIndex - 1;
+        const auto& [rookStart, rookEnd] = castleRookEndpoints[rookArrayIndex];
+        gameState.boardPosition[rookStart.y][rookStart.x] = gameState.boardPosition[rookEnd.y][rookEnd.x];
+        gameState.boardPosition[rookEnd.y][rookEnd.x] = std::nullopt;
     }
 
-    gameState = gameStateHistory.back();
-    gameStateHistory.pop_back();
+    // restore enpassant and castling rights states.
+    gameState.enPassantSquare = moveDelta.previousEnPassantSquare;
+    gameState.movesSinceEnPassant = moveDelta.previousMovesSinceEnPassant;
+    gameState.whiteCastleRights = moveDelta.previousWhiteCastleRights;
+    gameState.blackCastleRights = moveDelta.previousBlackCastleRights;
 }
 
 void Game::updateCastlingRights(GameState& gameState, const Move &move) const {
@@ -484,8 +562,7 @@ bool Game::checkIsMoveLegal(const GameState& gameState, const Move& move) const 
 
     // simulate the board position if the move was to be made
     auto simulatedGameState = gameState;
-    std::vector<GameState> simulatedGameStateHistory;
-    movePiece(simulatedGameState, move, simulatedGameStateHistory);
+    movePiece(simulatedGameState, move);
 
     // disallow moves that would leave the king in check
     if (checkIsKingInCheck(simulatedGameState, gameState.moveColour))
@@ -807,19 +884,24 @@ bool Game::checkForPawnPromotionOnNextMove(const GameState& gameState, const Mov
     return move.endSquare.y == 7;
 }
 
-std::vector<Move> Game::generateAllLegalMoves(const GameState& gameState, bool capturesOnly) const {
+std::vector<Move> Game::generateAllLegalMoves(const GameState& gameState, const bool capturesOnly) const {
     // generate all possible pseudo legal moves first then filter by actual legal moves
     // this reduces computation as unnecessarily simulating game states is more expensive than unnecessarily checking for pseudo legal moves
     std::vector<Move> validMoves;
     for (auto startSquareRank = 0; startSquareRank < 8; ++startSquareRank) {
         for (auto startSquareFile = 0; startSquareFile < 8; ++startSquareFile) {
-            if (gameState.boardPosition[startSquareRank][startSquareFile].has_value()) {
-                if (gameState.boardPosition[startSquareRank][startSquareFile].value().colour == gameState.moveColour) {
-                    for (auto endSquareRank = 0; endSquareRank < 8; ++endSquareRank) {
-                        for (auto endSquareFile = 0; endSquareFile < 8; ++endSquareFile) {
-                            if (const auto move = Move(Vector2Int(startSquareFile, startSquareRank), Vector2Int(endSquareFile, endSquareRank)); checkIsMoveValid(gameState, move))
-                                validMoves.emplace_back(move);
+            if (gameState.boardPosition[startSquareRank][startSquareFile].has_value() && gameState.boardPosition[startSquareRank][startSquareFile].value().colour == gameState.moveColour) {
+                for (auto endSquareRank = 0; endSquareRank < 8; ++endSquareRank) {
+                    for (auto endSquareFile = 0; endSquareFile < 8; ++endSquareFile) {
+                        if (capturesOnly) {
+                            const auto& endSquare = gameState.boardPosition[endSquareRank][endSquareFile];
+                            const bool occupiedByEnemy = endSquare.has_value() && endSquare->colour != gameState.moveColour;
+                            const bool isEnPassantTarget = gameState.enPassantSquare && endSquareFile == gameState.enPassantSquare->x && endSquareRank == gameState.enPassantSquare->y;
+                            if (!occupiedByEnemy && !isEnPassantTarget)
+                                continue;
                         }
+                        if (const auto move = Move(Vector2Int(startSquareFile, startSquareRank), Vector2Int(endSquareFile, endSquareRank)); checkIsMoveValid(gameState, move))
+                            validMoves.emplace_back(move);
                     }
                 }
             }
