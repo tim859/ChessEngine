@@ -1,13 +1,36 @@
 #include "game.h"
 #include <algorithm>
 #include <iostream>
+#include <random>
 #include <ranges>
+
+ZobristHashKeys Game::generateZobristHashKeys() {
+    // set up rng
+    constexpr uint64_t zobristSeed = 42;
+    std::mt19937_64 rng(zobristSeed);
+
+    // initialise hash keys
+    ZobristHashKeys zobristHashKeys;
+    for (auto i = 0; i < 64; ++i) {
+        for (auto j = 0; j < 6; ++j) {
+            for (auto k = 0; k < 2; ++k)
+                zobristHashKeys.boardHash[i][j][k] = rng();
+        }
+    }
+    for (auto i = 0; i < 8; ++i)
+        zobristHashKeys.enPassantFileHash[i] = rng();
+    for (auto i = 0; i < 4; ++i)
+        zobristHashKeys.castlingRightsHash[i] = rng();
+    zobristHashKeys.turnHash = rng();
+
+    return zobristHashKeys;
+}
 
 std::vector<Vector2Int> Game::generateLegalMovesForSquare(const GameState& gameState,  const Vector2Int startSquare) const {
     std::vector<Vector2Int> validMovableSquares;
     for (int rank = 0; rank < 8; ++rank) {
         for (int file = 0; file < 8; ++file) {
-            if (const auto move = Move(startSquare, Vector2Int(file, rank)); checkIsMoveLegal(gameState, move))
+            if (const auto move = Move(startSquare, Vector2Int(file, rank)); isMoveLegal(gameState, move))
                 validMovableSquares.emplace_back(file, rank);
         }
     }
@@ -117,15 +140,14 @@ bool Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
 
     // ---------- 3. castling rights ----------
 
-    gameState.whiteCastleRights = {false, false};
-    gameState.blackCastleRights = {false, false};
+    gameState.castlingRights = {false, false, false, false};
     if (fenTokens[2] != "-") {
         for (const auto& character : fenTokens[2]) {
             switch (character) {
-                case 'Q': gameState.whiteCastleRights[0] = true; break;
-                case 'K': gameState.whiteCastleRights[1] = true; break;
-                case 'q': gameState.blackCastleRights[0] = true; break;
-                case 'k': gameState.blackCastleRights[1] = true; break;
+                case 'Q': gameState.castlingRights[0] = true; break;
+                case 'K': gameState.castlingRights[1] = true; break;
+                case 'q': gameState.castlingRights[2] = true; break;
+                case 'k': gameState.castlingRights[3] = true; break;
                 default:
                     std::cerr << "FEN castling rights invalid" << std::endl;
                     return false;
@@ -204,6 +226,7 @@ bool Game::populateGameStateFromFEN(GameState& gameState, std::vector<GameState>
         return false;
     }
 
+    gameState.zobristHash = generateZobristHash(gameState);
     gameStateHistory.emplace_back(gameState);
     return true;
 }
@@ -241,7 +264,7 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2I
     // moveDelta is populated only when the move was legal and applied. it carries everything
     // needed to derive moveType post-hoc (capture / castle / promotion attribution).
     std::optional<MoveDelta> moveDelta;
-    if (checkIsMoveLegal(gameState, move)) {
+    if (isMoveLegal(gameState, move)) {
         if (pawnPromotionChoice)
             move.promotionPieceType = pawnPromotionChoice->type;
         // GUI code maintains the full gameStateHistory for threefold repetition;
@@ -253,7 +276,7 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2I
     // derive moveType from the delta. the order matters: castling and promotion are more specific
     // than "regular capture" and override it, and CHECK overrides everything below.
     if (moveDelta) {
-        if (moveDelta->castleRookIndex > 0)
+        if (moveDelta->castleType != GameTypes::CastleType::NOCASTLE)
             moveType = GameTypes::MoveType::CASTLE;
         else if (moveDelta->wasPromotion)
             moveType = GameTypes::MoveType::PROMOTEPAWN;
@@ -263,13 +286,13 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2I
             moveType = GameTypes::MoveType::MOVESELF;
     }
 
-    if (checkIsKingInCheck(gameState, gameState.moveColour))
+    if (isKingInCheck(gameState, gameState.moveColour))
         moveType = GameTypes::MoveType::CHECK;
 
     // check for stalemate and checkmate
     if (generateAllLegalMoves(gameState).empty()) {
         moveType = GameTypes::MoveType::GAMEOVER;
-        if (checkIsKingInCheck(gameState, gameState.moveColour)) {
+        if (isKingInCheck(gameState, gameState.moveColour)) {
             if (gameState.moveColour == Piece::Colour::WHITE)
                 gameState.gameOverType = GameTypes::GameOverType::BLACKWINBYCHECKMATE;
             else
@@ -296,9 +319,9 @@ GameTypes::MoveType Game::placePieceOnBoard(GameState& gameState, const Vector2I
     // from the moveDelta directly rather than from moveType. wasPromotion counts as a pawn move
     // even though the post-move endSquare no longer holds a pawn.
     const auto& endSquarePiece = gameState.boardPosition[move.endSquare.y][move.endSquare.x];
-    const bool wasCapture = moveDelta && moveDelta->capturedPiece.has_value();
+    const bool wasCapture = moveDelta && moveDelta->capturedPiece;
     const bool wasPawnMove = moveDelta && (moveDelta->wasPromotion
-                                           || (endSquarePiece.has_value() && endSquarePiece->type == Piece::Type::PAWN));
+                                           || (endSquarePiece && endSquarePiece->type == Piece::Type::PAWN));
     if (wasCapture || wasPawnMove)
         gameState.halfMovesSinceLastActiveMove = 0;
     else {
@@ -318,21 +341,25 @@ MoveDelta Game::movePiece(GameState& gameState, const Move& move) const {
     const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
 
     // record everything needed to reverse this move, before any state mutates.
-    // capturedPiece is filled in by the EP / regular-capture branches below.
+    // capturedPiece is filled in by the enpassant / regular-capture branches below.
     MoveDelta moveDelta;
     moveDelta.move = move;
     moveDelta.previousEnPassantSquare = gameState.enPassantSquare;
     moveDelta.previousMovesSinceEnPassant = gameState.movesSinceEnPassant;
-    moveDelta.previousWhiteCastleRights = gameState.whiteCastleRights;
-    moveDelta.previousBlackCastleRights = gameState.blackCastleRights;
+    moveDelta.previousCastlingRights = gameState.castlingRights;
     // en passant can override this below
     moveDelta.capturedPieceSquare = move.endSquare;
+    moveDelta.previousZobristHash = gameState.zobristHash;
 
     // ---------- en passant ---------------
 
+    // XOR out the old enpassant file if it was playable
+    if (isEnPassantPlayable(gameState))
+        gameState.zobristHash ^= zobristHashKeys.enPassantFileHash[gameState.enPassantSquare->x];
+
     // check for pawn double push and record the intermediate square it skipped over (enPassantSquare) and the square it is now on (enPassantPawnSquare)
     if (checkForPawnDoublePush(gameState, move)) {
-        const int forwardStep = (movePiece.colour == Piece::Colour::WHITE) ? -1 : 1;
+        const int forwardStep = movePiece.colour == Piece::Colour::WHITE ? -1 : 1;
         gameState.enPassantSquare = Vector2Int(move.endSquare.x, move.endSquare.y - forwardStep);
         gameState.movesSinceEnPassant = 0;
     }
@@ -348,14 +375,23 @@ MoveDelta Game::movePiece(GameState& gameState, const Move& move) const {
         moveDelta.capturedPiece = gameState.boardPosition[capturedSquare.y][capturedSquare.x];
         moveDelta.capturedPieceSquare = capturedSquare;
         gameState.boardPosition[capturedSquare.y][capturedSquare.x] = std::nullopt;
+
+        // XOR out the pawn on the captured square. read the colour from moveDelta.capturedPiece
+        // (already saved above) rather than re-reading boardPosition - the square was just cleared,
+        // so dereferencing the optional there would be UB.
+        gameState.zobristHash ^= zobristHashKeys.boardHash[capturedSquare.y * 8 + capturedSquare.x][static_cast<int>(Piece::Type::PAWN)][moveDelta.capturedPiece->colour == Piece::Colour::WHITE ? 0 : 1];
     }
     else if (gameState.boardPosition[move.endSquare.y][move.endSquare.x]) {
+        const auto capturedPiece = gameState.boardPosition[move.endSquare.y][move.endSquare.x];
         // regular capture - the piece on the end square will be overwritten when we place the moving piece there.
         // capturedPieceSquare is already move.endSquare from the default above.
-        moveDelta.capturedPiece = gameState.boardPosition[move.endSquare.y][move.endSquare.x];
+        moveDelta.capturedPiece = capturedPiece;
+
+        // XOR out the piece on the captured square
+        gameState.zobristHash ^= zobristHashKeys.boardHash[move.endSquare.y * 8 + move.endSquare.x][static_cast<int>(capturedPiece->type)][capturedPiece->colour == Piece::Colour::WHITE ? 0 : 1];
     }
 
-    // allow one move before en passant is no longer available
+    // allow one move before enpassant is no longer available
     if (gameState.enPassantSquare) {
         if (gameState.movesSinceEnPassant == 0)
             ++gameState.movesSinceEnPassant;
@@ -365,31 +401,131 @@ MoveDelta Game::movePiece(GameState& gameState, const Move& move) const {
         }
     }
 
+    // XOR in the new en passant file if it is playable
+    if (isEnPassantPlayable(gameState))
+        gameState.zobristHash ^= zobristHashKeys.enPassantFileHash[gameState.enPassantSquare->x];
+
     // ----------------- castling --------------------
 
-    // check for castle and if returns true move the rook on the board
-    // 0 = no rook needs castling, 1 = white queenside rook, 2 = white kingside rook, 3 = black queenside rook, 4 = black kingside rook
-    if (const auto rookIndex = checkForCastle(gameState, move); rookIndex > 0) {
-        castleRook(gameState, rookIndex);
-        moveDelta.castleRookIndex = rookIndex;
-    }
-    updateCastlingRights(gameState, move);
+    // check for castle and if so move the rook on the board. checkForCastle returns CastleType::NOCASTLE
+    // when the move isn't a castle, otherwise the specific WHITE/BLACK QUEENSIDE/KINGSIDE variant.
+    if (const auto castleType = checkForCastle(gameState, move); castleType != GameTypes::CastleType::NOCASTLE) {
+        castleRook(gameState, castleType);
+        moveDelta.castleType = castleType;
 
-    // ----------------- moving the piece --------------------
+        Vector2Int rookStartSquare{};
+        Vector2Int rookEndSquare{};
+        switch (castleType) {
+        case GameTypes::CastleType::WHITEQUEENSIDE:
+            rookStartSquare = whiteQueensideRookStartSquare;
+            rookEndSquare = whiteQueensideRookEndSquare;
+            break;
+        case GameTypes::CastleType::WHITEKINGSIDE:
+            rookStartSquare = whiteKingsideRookStartSquare;
+            rookEndSquare = whiteKingsideRookEndSquare;
+            break;
+        case GameTypes::CastleType::BLACKQUEENSIDE:
+            rookStartSquare = blackQueensideRookStartSquare;
+            rookEndSquare = blackQueensideRookEndSquare;
+            break;
+        case GameTypes::CastleType::BLACKKINGSIDE:
+            rookStartSquare = blackKingsideRookStartSquare;
+            rookEndSquare = blackKingsideRookEndSquare;
+            break;
+        }
+
+        auto rookColour = 0;
+        if (castleType == GameTypes::CastleType::BLACKQUEENSIDE || castleType == GameTypes::CastleType::BLACKKINGSIDE)
+            rookColour = 1;
+
+        // XOR out the rook on its start square
+        gameState.zobristHash ^= zobristHashKeys.boardHash[rookStartSquare.y * 8 + rookStartSquare.x][static_cast<int>(Piece::Type::ROOK)][rookColour];
+        // XOR in the rook on its end square
+        gameState.zobristHash ^= zobristHashKeys.boardHash[rookEndSquare.y * 8 + rookEndSquare.x][static_cast<int>(Piece::Type::ROOK)][rookColour];
+    }
+
+    // -------------------- update castling rights --------------------
+
+    const auto endSquareHasPiece = gameState.boardPosition[move.endSquare.y][move.endSquare.x];
+
+    struct SideCastlingData {
+        // indices into gameState.castlingRights for this side's queenside and kingside flags.
+        // ordering of castlingRights is {WQ, WK, BQ, BK}.
+        int queensideIndex;
+        int kingsideIndex;
+        Vector2Int queensideRookStartSquare;
+        Vector2Int kingsideRookStartSquare;
+        Piece::Colour pieceColour;
+    };
+
+    constexpr std::array<SideCastlingData, 2> sides = {{
+        {0, 1, whiteQueensideRookStartSquare, whiteKingsideRookStartSquare, Piece::Colour::WHITE},
+        {2, 3, blackQueensideRookStartSquare, blackKingsideRookStartSquare, Piece::Colour::BLACK}
+    }};
+
+    // for both sides of the board (black and white) we check
+    for (const auto& side : sides) {
+        // initial check - no point doing lots of comparisons if that side has no castling rights
+        if (!gameState.castlingRights[side.queensideIndex] && !gameState.castlingRights[side.kingsideIndex])
+            continue;
+
+        // if this side moved its king, or its rook, update the castling rights
+        if (movePiece.colour == side.pieceColour) {
+            if (movePiece.type == Piece::Type::KING) {
+                gameState.castlingRights[side.queensideIndex] = false;
+                gameState.castlingRights[side.kingsideIndex] = false;
+            } else if (movePiece.type == Piece::Type::ROOK) {
+                if (move.startSquare == side.queensideRookStartSquare)
+                    gameState.castlingRights[side.queensideIndex] = false;
+                if (move.startSquare == side.kingsideRookStartSquare)
+                    gameState.castlingRights[side.kingsideIndex] = false;
+            }
+        }
+
+        // if an enemy piece moved onto a rook start square on this side, the rook was taken (if it wasn't already), update castling rights
+        if (endSquareHasPiece) {
+            if (move.endSquare == side.queensideRookStartSquare)
+                gameState.castlingRights[side.queensideIndex] = false;
+            if (move.endSquare == side.kingsideRookStartSquare)
+                gameState.castlingRights[side.kingsideIndex] = false;
+        }
+    }
+
+    // XOR the castling-rights key for any flag that changed during this move. XOR is self-inverse,
+    // so a single toggle correctly handles both true->false (right lost) and false->true (which
+    // doesn't happen in normal play, but the code is symmetric and would do the right thing).
+    for (int i = 0; i < 4; ++i) {
+        if (moveDelta.previousCastlingRights[i] != gameState.castlingRights[i])
+            gameState.zobristHash ^= zobristHashKeys.castlingRightsHash[i];
+    }
+
+    // ----------------- move the piece --------------------
+
+    // XOR out the moving piece on the start square
+    gameState.zobristHash ^= zobristHashKeys.boardHash[move.startSquare.y * 8 + move.startSquare.x][static_cast<int>(movePiece.type)][movePiece.colour == Piece::Colour::WHITE ? 0 : 1];
 
     // if a pawn is being promoted, place the requested promotion piece on the end square
     if (checkForPawnPromotionOnNextMove(gameState, move) && move.promotionPieceType) {
         gameState.boardPosition[move.endSquare.y][move.endSquare.x] = Piece(*move.promotionPieceType, movePiece.colour);
         moveDelta.wasPromotion = true;
+
+        // XOR in the promoted piece on the end square
+        gameState.zobristHash ^= zobristHashKeys.boardHash[move.endSquare.y * 8 + move.endSquare.x][static_cast<int>(*move.promotionPieceType)][movePiece.colour == Piece::Colour::WHITE ? 0 : 1];
     }
     // otherwise place the move piece on the end square, overwriting/capturing any enemy piece already there
-    else
+    else {
         gameState.boardPosition[move.endSquare.y][move.endSquare.x] = movePiece;
+
+        // XOR in the moving piece on the end square
+        gameState.zobristHash ^= zobristHashKeys.boardHash[move.endSquare.y * 8 + move.endSquare.x][static_cast<int>(movePiece.type)][movePiece.colour == Piece::Colour::WHITE ? 0 : 1];
+    }
 
     // remove the move piece from the start square
     gameState.boardPosition[move.startSquare.y][move.startSquare.x] = std::nullopt;
     // toggle move colour
     gameState.moveColour = gameState.moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE;
+    // XOR the turn
+    gameState.zobristHash ^= zobristHashKeys.turnHash;
     // update move counters
     ++gameState.halfMoveCounter;
     if (gameState.halfMoveCounter % 2 == 0)
@@ -423,15 +559,16 @@ void Game::undoLastMove(GameState& gameState, const MoveDelta& moveDelta) const 
         gameState.boardPosition[moveDelta.capturedPieceSquare.y][moveDelta.capturedPieceSquare.x] = moveDelta.capturedPiece;
 
     // undo the castling rook move - castleRook moved the rook from its corner to its castle-end square; reverse it.
-    if (moveDelta.castleRookIndex > 0) {
-        // {rookStartSquare, rookEndSquare} keyed by castleRookIndex - 1, mirroring castleRook's table.
+    if (moveDelta.castleType != GameTypes::CastleType::NOCASTLE) {
+        // {rookStartSquare, rookEndSquare} indexed parallel to GameTypes::CastleType (minus the NOCASTLE entry),
+        // mirroring castleRook's rookMoves table.
         constexpr std::array<std::pair<Vector2Int, Vector2Int>, 4> castleRookEndpoints{{
-            {Vector2Int{0, 7}, Vector2Int{3, 7}},  // white queenside
-            {Vector2Int{7, 7}, Vector2Int{5, 7}},  // white kingside
-            {Vector2Int{0, 0}, Vector2Int{3, 0}},  // black queenside
-            {Vector2Int{7, 0}, Vector2Int{5, 0}}   // black kingside
+            {whiteQueensideRookStartSquare, whiteQueensideRookEndSquare},
+            {whiteKingsideRookStartSquare, whiteKingsideRookEndSquare},
+            {blackQueensideRookStartSquare, blackQueensideRookEndSquare},
+            {blackKingsideRookStartSquare, blackKingsideRookEndSquare}
         }};
-        const auto rookArrayIndex = moveDelta.castleRookIndex - 1;
+        const auto rookArrayIndex = static_cast<int>(moveDelta.castleType) - 1;
         const auto& [rookStart, rookEnd] = castleRookEndpoints[rookArrayIndex];
         gameState.boardPosition[rookStart.y][rookStart.x] = gameState.boardPosition[rookEnd.y][rookEnd.x];
         gameState.boardPosition[rookEnd.y][rookEnd.x] = std::nullopt;
@@ -440,81 +577,35 @@ void Game::undoLastMove(GameState& gameState, const MoveDelta& moveDelta) const 
     // restore enpassant and castling rights states.
     gameState.enPassantSquare = moveDelta.previousEnPassantSquare;
     gameState.movesSinceEnPassant = moveDelta.previousMovesSinceEnPassant;
-    gameState.whiteCastleRights = moveDelta.previousWhiteCastleRights;
-    gameState.blackCastleRights = moveDelta.previousBlackCastleRights;
+    gameState.castlingRights = moveDelta.previousCastlingRights;
+    gameState.zobristHash = moveDelta.previousZobristHash;
 }
 
-void Game::updateCastlingRights(GameState& gameState, const Move &move) const {
-    if (!gameState.boardPosition[move.startSquare.y][move.startSquare.x])
-        return;
-    const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
-    const auto endSquareHasPiece = gameState.boardPosition[move.endSquare.y][move.endSquare.x].has_value();
-
-    struct SideCastlingData {
-        // [0]=queenside, [1]=kingside
-        std::array<bool, 2>& castleRights;
-        Vector2Int queensideRookStartSquare;
-        Vector2Int kingsideRookStartSquare;
-        Piece::Colour pieceColour;
-    };
-
-    const std::array<SideCastlingData, 2> sides =
-    {{{gameState.whiteCastleRights, whiteQueensideRookStartSquare, whiteKingsideRookStartSquare, Piece::Colour::WHITE},
-        {gameState.blackCastleRights, blackQueensideRookStartSquare, blackKingsideRookStartSquare, Piece::Colour::BLACK}}};
-
-    // for both sides of the board (black and white) we check
-    for (auto& side : sides) {
-        // initial check - no point doing lots of comparisons if that side has no castling rights
-        if (side.castleRights == std::array{false, false})
-            continue;
-
-        // if this side moved it's king, or it's rook, update the castling rights
-        if (movePiece.colour == side.pieceColour) {
-            if (movePiece.type == Piece::Type::KING) {
-                side.castleRights = std::array{false, false};
-            } else if (movePiece.type == Piece::Type::ROOK) {
-                if (move.startSquare == side.queensideRookStartSquare)
-                    side.castleRights[0] = false;
-                if (move.startSquare == side.kingsideRookStartSquare)
-                    side.castleRights[1] = false;
-            }
-        }
-
-        // if an enemy piece moved onto a rook start square on this side, the rook was taken (if it wasn't already), update castling rights
-        if (endSquareHasPiece) {
-            if (move.endSquare == side.queensideRookStartSquare)
-                side.castleRights[0] = false;
-            if (move.endSquare == side.kingsideRookStartSquare)
-                side.castleRights[1] = false;
-        }
-    }
-}
-
-// 1 = white queenside rook, 2 = white kingside rook, 3 = black queenside rook, 4 = black kingside rook
-void Game::castleRook(GameState& gameState, const int rook) const {
+void Game::castleRook(GameState& gameState, const GameTypes::CastleType castleType) const {
     struct CastleRookData {
         Vector2Int startSquare;
         Vector2Int endSquare;
         Piece::Colour rookColour;
     };
 
+    // moves the rook from its corner to the square next to where the king lands.
+    // indexed parallel to GameTypes::CastleType so that static_cast<int>(castleType) - 1 selects the right entry.
+    // (the - 1 is because NOCASTLE = 0 sits at the front of the enum and isn't represented in this table.)
     constexpr std::array rookMoves{
-        // white queenside
-        CastleRookData{{0, 7}, {3, 7}, Piece::Colour::WHITE},
-        // white kingside
-        CastleRookData{{7, 7}, {5, 7}, Piece::Colour::WHITE},
-        // black queenside
-        CastleRookData{{0, 0}, {3, 0}, Piece::Colour::BLACK},
-        // black kingside
-        CastleRookData{{7, 0}, {5, 0}, Piece::Colour::BLACK}};
+        CastleRookData{whiteQueensideRookStartSquare, whiteQueensideRookEndSquare, Piece::Colour::WHITE},
+        CastleRookData{whiteKingsideRookStartSquare, whiteKingsideRookEndSquare, Piece::Colour::WHITE},
+        CastleRookData{blackQueensideRookStartSquare, blackQueensideRookEndSquare, Piece::Colour::BLACK},
+        CastleRookData{blackKingsideRookStartSquare, blackKingsideRookEndSquare, Piece::Colour::BLACK}
+    };
 
-    const CastleRookData& castleRookData = rookMoves[rook-1];
+    // NOCASTLE is the caller's responsibility to filter out before calling castleRook.
+    const auto& rookData = rookMoves[static_cast<int>(castleType) - 1];
 
-    gameState.boardPosition[castleRookData.startSquare.y][castleRookData.startSquare.x] = std::nullopt;
-    gameState.boardPosition[castleRookData.endSquare.y][castleRookData.endSquare.x] = Piece(Piece::Type::ROOK, castleRookData.rookColour);
+    gameState.boardPosition[rookData.startSquare.y][rookData.startSquare.x] = std::nullopt;
+    gameState.boardPosition[rookData.endSquare.y][rookData.endSquare.x] = Piece(Piece::Type::ROOK, rookData.rookColour);
 }
 
-bool Game::checkIsMoveValid(const GameState& gameState, const Move& move) const {
+bool Game::isMoveValid(const GameState& gameState, const Move& move) const {
     // universal checks carried out for all pieces
 
     // make sure start square contains a piece
@@ -541,23 +632,23 @@ bool Game::checkIsMoveValid(const GameState& gameState, const Move& move) const 
 
     switch (movePiece.type) {
         case Piece::Type::QUEEN:
-            return checkIsMovePathClearForSliders(gameState, move);
+            return isMovePathClearForSliders(gameState, move);
         case Piece::Type::ROOK:
-            return (moveVector.x == 0 xor moveVector.y == 0) && checkIsMovePathClearForSliders(gameState, move);
+            return (moveVector.x == 0 xor moveVector.y == 0) && isMovePathClearForSliders(gameState, move);
         case Piece::Type::BISHOP:
-            return std::abs(moveVector.x) == std::abs(moveVector.y) ? checkIsMovePathClearForSliders(gameState, move) : false;
+            return std::abs(moveVector.x) == std::abs(moveVector.y) ? isMovePathClearForSliders(gameState, move) : false;
         case Piece::Type::KNIGHT:
             return absMoveVector == Vector2Int(2, 1) || absMoveVector == Vector2Int(1, 2);
         case Piece::Type::KING:
-            return checkIsMoveValidForKing(gameState, move);
+            return isMoveValidForKing(gameState, move);
         case Piece::Type::PAWN:
-            return checkIsMoveValidForPawn(gameState, move);
+            return isMoveValidForPawn(gameState, move);
     }
     return false;
 }
 
-bool Game::checkIsMoveLegal(const GameState& gameState, const Move& move) const {
-    if (!checkIsMoveValid(gameState, move))
+bool Game::isMoveLegal(const GameState& gameState, const Move& move) const {
+    if (!isMoveValid(gameState, move))
         return false;
 
     // simulate the board position if the move was to be made
@@ -565,11 +656,11 @@ bool Game::checkIsMoveLegal(const GameState& gameState, const Move& move) const 
     movePiece(simulatedGameState, move);
 
     // disallow moves that would leave the king in check
-    if (checkIsKingInCheck(simulatedGameState, gameState.moveColour))
+    if (isKingInCheck(simulatedGameState, gameState.moveColour))
         return false;
 
     // don't allow castling if the king is in check, or if it would move the king through squares under attack
-    if (checkForCastle(gameState, move) > 0) {
+    if (checkForCastle(gameState, move) != GameTypes::CastleType::NOCASTLE) {
         // get direction of move
         Vector2Int stepVector = {1, 0};
         if (move.endSquare.x - move.startSquare.x < 0)
@@ -578,7 +669,7 @@ bool Game::checkIsMoveLegal(const GameState& gameState, const Move& move) const 
         // check none of the squares in between the startSquare (inclusive) and the endSquare are under attack
         Vector2Int currentSquare = move.startSquare;
         while (currentSquare != move.endSquare) {
-            if (checkIsSquareUnderAttack(gameState, currentSquare, gameState.moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE))
+            if (isSquareUnderAttack(gameState, currentSquare, gameState.moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE))
                 return false;
             currentSquare += stepVector;
         }
@@ -586,7 +677,7 @@ bool Game::checkIsMoveLegal(const GameState& gameState, const Move& move) const 
     return true;
 }
 
-bool Game::checkIsMovePathClearForSliders(const GameState& gameState, const Move& move) const {
+bool Game::isMovePathClearForSliders(const GameState& gameState, const Move& move) const {
     const Vector2Int moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
 
     // check to make sure the move makes geometric sense for sliding pieces
@@ -617,7 +708,7 @@ bool Game::checkIsMovePathClearForSliders(const GameState& gameState, const Move
     return true;
 }
 
-bool Game::checkIsMoveValidForKing(const GameState& gameState, const Move& move) const {
+bool Game::isMoveValidForKing(const GameState& gameState, const Move& move) const {
     const Vector2Int moveVector = {move.endSquare.x - move.startSquare.x, move.endSquare.y - move.startSquare.y};
 
     // normal king move
@@ -625,61 +716,86 @@ bool Game::checkIsMoveValidForKing(const GameState& gameState, const Move& move)
         return true;
 
     // castling
-    return checkForCastle(gameState, move) > 0;
+    return checkForCastle(gameState, move) != GameTypes::CastleType::NOCASTLE;
 }
 
-int Game::checkForCastle(const GameState& gameState, const Move& move) const {
-    const bool isWhite = gameState.moveColour == Piece::Colour::WHITE;
-    const auto& castleRights = isWhite ? gameState.whiteCastleRights : gameState.blackCastleRights;
-    const Vector2Int kingStartSquare = isWhite ? whiteKingStartSquare : blackKingStartSquare;
-    const int startRow = isWhite ? 7 : 0;
-    const auto rookColour = isWhite ? Piece::Colour::WHITE : Piece::Colour::BLACK;
+GameTypes::CastleType Game::checkForCastle(const GameState& gameState, const Move& move) const {
+    using GameTypes::CastleType;
 
+    // every castle is a king move from its home square, so bail early if the start square doesn't match.
+    // this short-circuit also means every other check below is per-side rather than per-piece.
+    const bool isWhite = gameState.moveColour == Piece::Colour::WHITE;
+    const Vector2Int kingStartSquare = isWhite ? whiteKingStartSquare : blackKingStartSquare;
+    if (move.startSquare != kingStartSquare)
+        return CastleType::NOCASTLE;
+
+    // group everything the per-castle check needs into one struct so the loop body stays uniform.
+    // emptySquares is sized 3 because queenside checks 3 squares (b/c/d-file) and kingside checks 2 (f/g-file);
+    // emptySquaresCount tells us how many entries are real for a given option.
     struct CastleOption {
-        int rightsIndex{};
-        Vector2Int kingTarget;
-        Vector2Int rookStartSquare;
-        std::array<Vector2Int, 3> squaresToCheck;
-        int squaresToCheckCount{};
-        int rookIndex{};
+        int rightsIndex;                            // index into gameState.castlingRights {WQ, WK, BQ, BK}
+        Vector2Int kingTarget;                      // square the king must be moving to (c-file or g-file on the home row)
+        Vector2Int rookStartSquare;                 // square the rook must still be sitting on
+        std::array<Vector2Int, 3> emptySquares;     // squares between king and rook that must be empty
+        int emptySquaresCount;                      // 3 for queenside, 2 for kingside (third slot is unused)
+        CastleType resultIfLegal;                   // returned when all the conditions hold for this option
     };
 
-    const CastleOption castleOptions[2] = {
-        // queenside
-        {0, {2, startRow}, {0, startRow}, {{{1, startRow}, {2, startRow}, {3, startRow}}}, 3, isWhite ? 1 : 3},
-        // kingside
-        {1, {6, startRow}, {7, startRow}, {{{5, startRow}, {6, startRow}, {0, 0}}}, 2, isWhite ? 2 : 4}};
+    const int homeRow = isWhite ? 7 : 0;
+    const std::array<CastleOption, 2> castleOptions = {{
+        // queenside: king e -> c, rook a -> d. b/c/d-files between them must be empty.
+        {
+            isWhite ? 0 : 2,
+            {2, homeRow},
+            {0, homeRow},
+            {{{1, homeRow}, {2, homeRow}, {3, homeRow}}},
+            3,
+            isWhite ? CastleType::WHITEQUEENSIDE : CastleType::BLACKQUEENSIDE
+        },
+        // kingside: king e -> g, rook h -> f. f/g-files between them must be empty.
+        {
+            isWhite ? 1 : 3,
+            {6, homeRow},
+            {7, homeRow},
+            {{{5, homeRow}, {6, homeRow}, {0, 0}}},
+            2,
+            isWhite ? CastleType::WHITEKINGSIDE : CastleType::BLACKKINGSIDE
+        }
+    }};
 
-    if (move.startSquare != kingStartSquare)
-        return 0;
+    const auto rookColour = isWhite ? Piece::Colour::WHITE : Piece::Colour::BLACK;
 
-    // for both the queenside and the kingside of the king we check
-    for (const auto& castleOption : castleOptions) {
-        if (!castleRights[castleOption.rightsIndex] || move.endSquare != castleOption.kingTarget)
+    for (const auto& option : castleOptions) {
+        // 1. the side must still have castling rights for this castle, and the king must be heading to the right square.
+        if (!gameState.castlingRights[option.rightsIndex] || move.endSquare != option.kingTarget)
             continue;
 
-        const auto& rookSquare = gameState.boardPosition[castleOption.rookStartSquare.y][castleOption.rookStartSquare.x];
+        // 2. the rook must still be sitting on its starting square. updateCastlingRights would normally clear
+        //    the rights when a rook moves or is captured, but the board check is a safety net.
+        const auto& rookSquare = gameState.boardPosition[option.rookStartSquare.y][option.rookStartSquare.x];
         if (!rookSquare || rookSquare->type != Piece::Type::ROOK || rookSquare->colour != rookColour)
             continue;
 
-        auto pathClear = true;
-        for (int i = 0; i < castleOption.squaresToCheckCount; ++i) {
-            const auto& square = castleOption.squaresToCheck[i];
+        // 3. all squares between king and rook must be empty.
+        bool pathClear = true;
+        for (int i = 0; i < option.emptySquaresCount; ++i) {
+            const auto& square = option.emptySquares[i];
             if (gameState.boardPosition[square.y][square.x]) {
                 pathClear = false;
                 break;
             }
         }
 
-        // if all these conditions are met then the king is allowed to castle/move two squares
-        // returns 0 if no castle, return 1 to 4 to specify which rook needs to move as well
+        // note: this function does NOT check whether the king starts in check or passes through attacked squares.
+        // those are legality concerns handled in isMoveLegal, not validity concerns handled here.
         if (pathClear)
-            return castleOption.rookIndex;
+            return option.resultIfLegal;
     }
-    return 0;
+
+    return CastleType::NOCASTLE;
 }
 
-bool Game::checkIsMoveValidForPawn(const GameState& gameState, const Move& move) const {
+bool Game::isMoveValidForPawn(const GameState& gameState, const Move& move) const {
     if (!gameState.boardPosition[move.startSquare.y][move.startSquare.x])
         return false;
     const auto movePiece = gameState.boardPosition[move.startSquare.y][move.startSquare.x].value();
@@ -737,7 +853,7 @@ bool Game::checkForPawnDoublePush(const GameState& gameState, const Move& move) 
     // double push forward
     // requires no horizontal movement, 2 forward steps of vertical movement, pawn must be on the starting row, there must not be an enemy on the destination square
     // and there must not a piece on the intermediate square between the start and end square
-    return moveVector.x == 0 && moveVector.y == (forwardStep * 2) && move.startSquare.y == startingRow && !enemyOnEndSquare && checkIsMovePathClearForSliders(gameState, move);
+    return moveVector.x == 0 && moveVector.y == (forwardStep * 2) && move.startSquare.y == startingRow && !enemyOnEndSquare && isMovePathClearForSliders(gameState, move);
 }
 
 bool Game::checkForEnPassantTake(const GameState& gameState, const Move& move) const {
@@ -758,12 +874,12 @@ bool Game::checkForEnPassantTake(const GameState& gameState, const Move& move) c
     return false;
 }
 
-bool Game::checkIsSquareUnderAttack(const GameState& gameState, const Vector2Int square, const Piece::Colour enemyColour) const {
+bool Game::isSquareUnderAttack(const GameState& gameState, const Vector2Int square, const Piece::Colour enemyColour) const {
     constexpr std::array pieceDirections = {Vector2Int(1, 1), Vector2Int(-1, -1), Vector2Int(1, -1), Vector2Int(-1, 1), Vector2Int(1, 0), Vector2Int(0, 1), Vector2Int(-1, 0), Vector2Int(0, -1)};
 
     // -------------------- check for pawn attack --------------------
 
-    if (checkIsSquareUnderAttackByPawn(gameState, square, enemyColour))
+    if (isSquareUnderAttackByPawn(gameState, square, enemyColour))
         return true;
 
     // -------------------- check for knight attack --------------------
@@ -824,7 +940,7 @@ bool Game::checkIsSquareUnderAttack(const GameState& gameState, const Vector2Int
     return false;
 }
 
-bool Game::checkIsSquareUnderAttackByPawn(const GameState& gameState, const Vector2Int square, const Piece::Colour enemyColour) const {
+bool Game::isSquareUnderAttackByPawn(const GameState& gameState, const Vector2Int square, const Piece::Colour enemyColour) const {
     // get forward step of friendly colour
     int forwardStep = 1;
     if (enemyColour == Piece::Colour::BLACK)
@@ -846,7 +962,7 @@ bool Game::checkIsSquareUnderAttackByPawn(const GameState& gameState, const Vect
     return false;
 }
 
-bool Game::checkIsKingInCheck(const GameState& gameState, const Piece::Colour kingColour) const {
+bool Game::isKingInCheck(const GameState& gameState, const Piece::Colour kingColour) const {
     // find the king
     for (auto rank = 0; rank < 8; ++rank) {
         for (auto file = 0; file < 8; ++file) {
@@ -854,7 +970,7 @@ bool Game::checkIsKingInCheck(const GameState& gameState, const Piece::Colour ki
                 if (gameState.boardPosition[rank][file]->colour == kingColour && gameState.boardPosition[rank][file]->type == Piece::Type::KING) {
                     // check whether the king is currently under attack
                     const auto enemyColour = kingColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE;
-                    return checkIsSquareUnderAttack(gameState, Vector2Int(file, rank), enemyColour);
+                    return isSquareUnderAttack(gameState, Vector2Int(file, rank), enemyColour);
                 }
             }
         }
@@ -890,17 +1006,17 @@ std::vector<Move> Game::generateAllLegalMoves(const GameState& gameState, const 
     std::vector<Move> validMoves;
     for (auto startSquareRank = 0; startSquareRank < 8; ++startSquareRank) {
         for (auto startSquareFile = 0; startSquareFile < 8; ++startSquareFile) {
-            if (gameState.boardPosition[startSquareRank][startSquareFile].has_value() && gameState.boardPosition[startSquareRank][startSquareFile].value().colour == gameState.moveColour) {
+            if (gameState.boardPosition[startSquareRank][startSquareFile] && gameState.boardPosition[startSquareRank][startSquareFile].value().colour == gameState.moveColour) {
                 for (auto endSquareRank = 0; endSquareRank < 8; ++endSquareRank) {
                     for (auto endSquareFile = 0; endSquareFile < 8; ++endSquareFile) {
                         if (capturesOnly) {
                             const auto& endSquare = gameState.boardPosition[endSquareRank][endSquareFile];
-                            const bool occupiedByEnemy = endSquare.has_value() && endSquare->colour != gameState.moveColour;
+                            const bool occupiedByEnemy = endSquare && endSquare->colour != gameState.moveColour;
                             const bool isEnPassantTarget = gameState.enPassantSquare && endSquareFile == gameState.enPassantSquare->x && endSquareRank == gameState.enPassantSquare->y;
                             if (!occupiedByEnemy && !isEnPassantTarget)
                                 continue;
                         }
-                        if (const auto move = Move(Vector2Int(startSquareFile, startSquareRank), Vector2Int(endSquareFile, endSquareRank)); checkIsMoveValid(gameState, move))
+                        if (const auto move = Move(Vector2Int(startSquareFile, startSquareRank), Vector2Int(endSquareFile, endSquareRank)); isMoveValid(gameState, move))
                             validMoves.emplace_back(move);
                     }
                 }
@@ -909,14 +1025,57 @@ std::vector<Move> Game::generateAllLegalMoves(const GameState& gameState, const 
     }
     std::vector<Move> legalMoves;
     for (const auto& move : validMoves) {
-        if (!checkIsMoveLegal(gameState, move))
+        if (!isMoveLegal(gameState, move))
             continue;
 
-        const auto isCapture = gameState.boardPosition[move.endSquare.y][move.endSquare.x].has_value() || checkForEnPassantTake(gameState, move);
+        const auto isCapture = gameState.boardPosition[move.endSquare.y][move.endSquare.x] || checkForEnPassantTake(gameState, move);
         if (capturesOnly && !isCapture)
             continue;
 
         legalMoves.emplace_back(move);
     }
     return legalMoves;
+}
+
+uint64_t Game::generateZobristHash(const GameState& gameState) const {
+    uint64_t hash = 0;
+    for (auto rank = 0; rank < 8; ++rank) {
+        for (auto file = 0; file < 8; ++file) {
+            if (gameState.boardPosition[rank][file])
+                hash ^= zobristHashKeys.boardHash[rank * 8 + file][static_cast<int>(gameState.boardPosition[rank][file]->type)][gameState.boardPosition[rank][file]->colour == Piece::Colour::WHITE ? 0 : 1];
+        }
+    }
+
+    if (isEnPassantPlayable(gameState))
+        hash ^= zobristHashKeys.enPassantFileHash[gameState.enPassantSquare->x];
+
+    for (auto i = 0; i < 4; ++i) {
+        if (gameState.castlingRights[i])
+            hash ^= zobristHashKeys.castlingRightsHash[i];
+    }
+
+    if (gameState.moveColour == Piece::Colour::BLACK)
+        hash ^= zobristHashKeys.turnHash;
+
+    return hash;
+}
+
+/* Is there at least one pawn directly to the side of the pawn that has just double pushed and is it/are they the opposite colour of that double pushed pawn? */
+bool Game::isEnPassantPlayable(const GameState& gameState) const {
+    if (gameState.enPassantSquare) {
+        const int enemyForwardStep = gameState.moveColour == Piece::Colour::WHITE ? 1 : -1;
+        const int captureRank = gameState.enPassantSquare->y + enemyForwardStep;
+        const int enPassantFile = gameState.enPassantSquare->x;
+
+        const auto hasFriendlyPawnAt = [&](const int file) {
+            if (file < 0 || file > 7)
+                return false;
+            const auto& square = gameState.boardPosition[captureRank][file];
+            return square && square->type == Piece::Type::PAWN && square->colour == gameState.moveColour;
+        };
+
+        if (hasFriendlyPawnAt(enPassantFile - 1) || hasFriendlyPawnAt(enPassantFile + 1))
+            return true;
+    }
+    return false;
 }

@@ -34,14 +34,20 @@ struct Vector2Int {
 
 inline constexpr auto whiteKingStartSquare = Vector2Int(4, 7);
 inline constexpr auto whiteQueensideRookStartSquare = Vector2Int(0, 7);
+inline constexpr auto whiteQueensideRookEndSquare = Vector2Int(3, 7);
 inline constexpr auto whiteKingsideRookStartSquare = Vector2Int(7, 7);
+inline constexpr auto whiteKingsideRookEndSquare = Vector2Int(5, 7);
+
 inline constexpr auto blackKingStartSquare = Vector2Int(4, 0);
 inline constexpr auto blackQueensideRookStartSquare = Vector2Int(0, 0);
+inline constexpr auto blackQueensideRookEndSquare = Vector2Int(3, 0);
 inline constexpr auto blackKingsideRookStartSquare = Vector2Int(7, 0);
+inline constexpr auto blackKingsideRookEndSquare = Vector2Int(5, 0);
 
 namespace GameTypes {
     enum class MoveType {NONE, MOVESELF, CAPTURE, CASTLE, PROMOTEPAWN, CHECK, GAMEOVER};
     enum class GameOverType {CONTINUE, STALEMATE, TFRDRAW, FIFTYMOVEDRAW, WHITEWINBYCHECKMATE, BLACKWINBYCHECKMATE, WHITEWINBYRESIGN, BLACKWINBYRESIGN};
+    enum class CastleType {NOCASTLE, WHITEQUEENSIDE, WHITEKINGSIDE, BLACKQUEENSIDE, BLACKKINGSIDE};
 }
 
 
@@ -82,18 +88,18 @@ struct MoveDelta {
     std::optional<Piece> capturedPiece;
     Vector2Int capturedPieceSquare{};
     bool wasPromotion = false;
-    int castleRookIndex = 0;
+    GameTypes::CastleType castleType = GameTypes::CastleType::NOCASTLE;
     std::optional<Vector2Int> previousEnPassantSquare;
     int previousMovesSinceEnPassant = 0;
-    std::array<bool, 2> previousWhiteCastleRights{};
-    std::array<bool, 2> previousBlackCastleRights{};
+    std::array<bool, 4> previousCastlingRights{};
+    uint64_t previousZobristHash = 0;
 };
 
 struct GameState {
     std::optional<Piece> selectedPiece;
     std::optional<Vector2Int> selectedPieceStartSquare;
     // the 2d array that all the positions of the pieces will be held in
-    // remember that while the array will hold piece positions as [row][column], vector2's hold positions as (x, y) aka [column][row]
+    // remember that while the array will hold piece positions as [row][column]/[rank][file], vector2's hold positions as (x, y) aka [column][row]/[file][rank]
     // therefore whenever you use a vector2 to find a position in the 2d array you need to index it using [vector.y][vector.x]
     // also remember that the origin ([0][0] for the array and (0, 0) for vectors) is the top left corner of the board for both the array and vectors
     std::array<std::array<std::optional<Piece>, 8>, 8> boardPosition;
@@ -102,12 +108,12 @@ struct GameState {
     int halfMoveCounter = 0;
     int halfMovesSinceLastActiveMove = 0;
     int movesSinceEnPassant = 0;
-    // {white queenside, white kingside}
-    std::array<bool, 2> whiteCastleRights = {true, true};
-    // {black queenside, black kingside}
-    std::array<bool, 2> blackCastleRights = {true, true};
+    // {white queenside, white kingside, black queenside, black kingside
+    std::array<bool, 4> castlingRights = {true, true, true, true};
     std::optional<Vector2Int> enPassantSquare;
     GameTypes::GameOverType gameOverType = GameTypes::GameOverType::CONTINUE;
+    // zobrist hash that will contain a full board state in one 64-bit number
+    uint64_t zobristHash = 0;
 
     void reset() {
         selectedPiece = std::nullopt;
@@ -118,10 +124,10 @@ struct GameState {
         halfMoveCounter = 0;
         halfMovesSinceLastActiveMove = 0;
         movesSinceEnPassant = 0;
-        whiteCastleRights = {true, true};
-        blackCastleRights = {true, true};
+        castlingRights = {true, true, true, true};
         enPassantSquare = std::nullopt;
         gameOverType = GameTypes::GameOverType::CONTINUE;
+        zobristHash = 0;
     }
 
     bool operator==(const GameState& other) const {
@@ -131,16 +137,32 @@ struct GameState {
     bool operator<(const GameState& other) const {
         if (boardPosition != other.boardPosition) return boardPosition < other.boardPosition;
         if (moveColour != other.moveColour) return moveColour < other.moveColour;
-        if (whiteCastleRights != other.whiteCastleRights) return whiteCastleRights < other.whiteCastleRights;
-        if (blackCastleRights != other.blackCastleRights) return blackCastleRights < other.blackCastleRights;
+        if (castlingRights != other.castlingRights) return castlingRights < other.castlingRights;
         if (enPassantSquare != other.enPassantSquare) return enPassantSquare < other.enPassantSquare;
         return false;
     }
 };
 
+struct ZobristHashKeys
+{
+    // boardHash is accessed with [piece square index][piece type][piece colour]
+    // piece square index: rank * 8 + file
+    // piece type: static_cast<int>(Piece::Type) (casts the Piece::Type enum to its core int values)
+    // piece colour: 0 = white, 1 = black
+    std::array<std::array<std::array<uint64_t, 2>, 6>, 64> boardHash = {};
+    // only need the file, rank is always 3 or 6 depending on colour
+    std::array<uint64_t, 8> enPassantFileHash = {};
+    // white queenside, white kingside, black queenside, black kingside
+    std::array<uint64_t, 4> castlingRightsHash = {};
+    uint64_t turnHash = 0;
+};
+
 class Game {
     GameState currentGameState;
     std::vector<GameState> currentGameStateHistory;
+
+    [[nodiscard]] static ZobristHashKeys generateZobristHashKeys();
+    inline static const ZobristHashKeys zobristHashKeys = generateZobristHashKeys();
 
 public:
     // -------------------- getters --------------------
@@ -164,24 +186,26 @@ public:
     MoveDelta movePiece(GameState& gameState, const Move& move) const;
     void undoLastMove(GameState& gameState, const MoveDelta& moveDelta) const;
     void updateCastlingRights(GameState& gameState, const Move &move) const;
-    void castleRook(GameState& gameState, int rook) const;
+    void castleRook(GameState& gameState, GameTypes::CastleType castleType) const;
 
-    // -------------------- validation functions (do not modify the game state) --------------------
+    // -------------------- validation/helper functions (do not modify the game state) --------------------
 
-    [[nodiscard]] bool checkIsMoveValid(const GameState& gameState, const Move& move) const;
-    [[nodiscard]] bool checkIsMoveLegal(const GameState& gameState, const Move& move) const;
-    [[nodiscard]] bool checkIsMovePathClearForSliders(const GameState& gameState, const Move& move) const;
-    [[nodiscard]] bool checkIsMoveValidForKing(const GameState& gameState, const Move& move) const;
-    [[nodiscard]] int checkForCastle(const GameState& gameState, const Move& move) const;
-    [[nodiscard]] bool checkIsMoveValidForPawn(const GameState& gameState, const Move& move) const;
+    [[nodiscard]] bool isMoveValid(const GameState& gameState, const Move& move) const;
+    [[nodiscard]] bool isMoveLegal(const GameState& gameState, const Move& move) const;
+    [[nodiscard]] bool isMovePathClearForSliders(const GameState& gameState, const Move& move) const;
+    [[nodiscard]] bool isMoveValidForKing(const GameState& gameState, const Move& move) const;
+    [[nodiscard]] GameTypes::CastleType checkForCastle(const GameState& gameState, const Move& move) const;
+    [[nodiscard]] bool isMoveValidForPawn(const GameState& gameState, const Move& move) const;
     [[nodiscard]] bool checkForPawnDoublePush(const GameState& gameState, const Move& move) const;
     [[nodiscard]] bool checkForEnPassantTake(const GameState& gameState, const Move &move) const;
-    [[nodiscard]] bool checkIsSquareUnderAttack(const GameState& gameState, Vector2Int square, Piece::Colour enemyColour) const;
-    [[nodiscard]] bool checkIsSquareUnderAttackByPawn(const GameState& gameState, Vector2Int square, Piece::Colour enemyColour) const;
-    [[nodiscard]] bool checkIsKingInCheck(const GameState& gameState, Piece::Colour kingColour) const;
+    [[nodiscard]] bool isSquareUnderAttack(const GameState& gameState, Vector2Int square, Piece::Colour enemyColour) const;
+    [[nodiscard]] bool isSquareUnderAttackByPawn(const GameState& gameState, Vector2Int square, Piece::Colour enemyColour) const;
+    [[nodiscard]] bool isKingInCheck(const GameState& gameState, Piece::Colour kingColour) const;
     [[nodiscard]] bool checkForPawnPromotionOnLastMove(const GameState& gameState) const;
     [[nodiscard]] bool checkForPawnPromotionOnNextMove(const GameState& gameState, const Move& move) const;
     [[nodiscard]] std::vector<Move> generateAllLegalMoves(const GameState& gameState, bool capturesOnly = false) const;
+    [[nodiscard]] uint64_t generateZobristHash(const GameState& gameState) const;
+    [[nodiscard]] bool isEnPassantPlayable(const GameState& gameState) const;
 };
 
 #endif //CHESS_GAME_H
