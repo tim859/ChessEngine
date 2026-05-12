@@ -11,12 +11,28 @@ struct EngineSearchSettings {
     std::optional<int> wtime, btime, winc, binc, movestogo, depth, nodes, mate, movetime, perft;
 };
 
+struct TTEntry
+{
+    uint64_t hashKey;
+    Move bestMove;
+    int evaluation;
+    int16_t depth;
+    enum class Flag : uint8_t {EXACT, LOWERBOUND, UPPERBOUND} flag;
+};
+
 class Engine {
-    const std::map<Piece::Type, int> pieceValues = {{Piece::Type::PAWN, 100}, {Piece::Type::KNIGHT, 320}, {Piece::Type::BISHOP, 330}, {Piece::Type::ROOK, 500}, {Piece::Type::QUEEN, 900}, {Piece::Type::KING, 20000}};
-    const int minusInfinity = -999999;
-    const int infinity = 999999;
+    const std::array<int, 6> pieceValues = {20000, 900, 500, 330, 320, 100};
+    static constexpr int minusInfinity = -999999;
+    static constexpr int infinity = 999999;
     Move bestMove = {};
-    int movesSearched = 0;
+    int positionsEvaluated = 0;
+    int transpositions = 0;
+
+    // transposition table attributes
+    static constexpr int mateThreshold = infinity - 1000;
+    static constexpr size_t ttSize = 1 << 20;
+    static constexpr uint64_t ttMask = ttSize - 1;
+    std::vector<TTEntry> transpositionTable = std::vector<TTEntry>(ttSize);
 
 public:
     void reset();
@@ -31,6 +47,7 @@ private:
     void orderMoves (const Game& game, std::vector<Move>& moves) const;
     int search(Game& game, int alpha, int beta, int depthLeft, int initialDepth, int plyFromRoot, const std::stop_token& stopToken);
     int quiescenceSearch(Game& game, int alpha, int beta, int plyFromRoot);
+    void storeTTEntry(uint64_t hashKey, const Move& entryBestMove, int evaluation, int depth, TTEntry::Flag flag, int plyFromRoot);
 
     // performance testing
     [[nodiscard]] std::uint64_t perft(Game& game, int depth) const;

@@ -19,9 +19,9 @@ Move Engine::generateEngineMove(const Game& game, const EngineSearchSettings& en
     // even if depth 1 is interrupted before completing
     bestMove = allLegalMoves.front();
     Move bestMoveFromLastCompletedIteration = bestMove;
-    movesSearched = 0;
+    positionsEvaluated = 0;
 
-    const int maxSearchDepth = engineSearchSettings.depth.value_or(5);
+    const int maxSearchDepth = engineSearchSettings.depth.value_or(6);
 
     // iterative deepening: search progressively deeper, using the best move from the previous
     // iteration as the first move tried in the next iteration. this dramatically improves
@@ -41,14 +41,15 @@ Move Engine::generateEngineMove(const Game& game, const EngineSearchSettings& en
         }
 
         bestMoveFromLastCompletedIteration = bestMove;
-        std::cout << "depth " << currentDepth << " complete, eval: " << evaluation << ", moves searched so far: " << movesSearched << std::endl;
+        std::cout << "depth " << currentDepth << " complete, evaluation: " << evaluation << ", positions evaluated so far: " << positionsEvaluated << std::endl;
 
         // forced mate detected — searching deeper cannot improve the outcome
         if (evaluation >= infinity - 1000 || evaluation <= minusInfinity + 1000)
             break;
     }
 
-    std::cout << "total moves searched: " << movesSearched << std::endl;
+    std::cout << "total positions evaluated: " << positionsEvaluated << std::endl;
+    std::cout << "total transpositions: " << transpositions << std::endl;
     return bestMove;
 }
 
@@ -128,7 +129,7 @@ int Engine::countMaterial(const GameState& gameState, const Piece::Colour pieceC
         for (auto file = 0; file < 8; ++file) {
             if (gameState.boardPosition[rank][file]) {
                 if (gameState.boardPosition[rank][file]->colour == pieceColour)
-                    material += pieceValues.at(gameState.boardPosition[rank][file]->type);
+                    material += pieceValues[static_cast<int>(gameState.boardPosition[rank][file]->type)];
             }
         }
     }
@@ -165,22 +166,22 @@ void Engine::orderMoves(const Game& game, std::vector<Move>& moves) const {
     for (auto& move : moves) {
         auto moveScoreGuess = 0;
         const auto movePiece = game.getCurrentGameState().boardPosition[move.startSquare.y][move.startSquare.x].value();
-        const auto movePieceValue = pieceValues.at(movePiece.type);
+        const auto movePieceValue = pieceValues[static_cast<int>(movePiece.type)];
 
         // check if a piece will be captured on this move
         if (game.getCurrentGameState().boardPosition[move.endSquare.y][move.endSquare.x]) {
             const auto capturePiece = game.getCurrentGameState().boardPosition[move.endSquare.y][move.endSquare.x].value();
 
             // prioritise capturing opponents most valuable pieces with our least valuable pieces
-            moveScoreGuess = 10 * pieceValues.at(capturePiece.type) - movePieceValue;
+            moveScoreGuess = 10 * pieceValues[static_cast<int>(capturePiece.type)] - movePieceValue;
         }
 
         // promoting a pawn is likely to be good
         if (game.checkForPawnPromotionOnNextMove(game.getCurrentGameState(), move))
-            moveScoreGuess += pieceValues.at(Piece::Type::QUEEN);
+            moveScoreGuess += pieceValues[static_cast<int>(Piece::Type::QUEEN)];
 
         // penalise moving pieces to a square under attack by an opponent pawn
-        if (game.checkIsSquareUnderAttackByPawn(game.getCurrentGameState(), move.endSquare, game.getCurrentGameState().moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE))
+        if (game.isSquareUnderAttackByPawn(game.getCurrentGameState(), move.endSquare, game.getCurrentGameState().moveColour == Piece::Colour::WHITE ? Piece::Colour::BLACK : Piece::Colour::WHITE))
             moveScoreGuess -= movePieceValue;
 
         move.score = moveScoreGuess;
@@ -194,29 +195,56 @@ int Engine::search(Game& game, int alpha, const int beta, const int depthLeft, c
     if (stopToken.stop_requested())
         return alpha;
 
+    // -------------------- Transposition Table Probe --------------------
+    const auto hash = game.getCurrentGameState().zobristHash;
+    // fast lookup to find possible match in the transposition table
+    const auto& entry = transpositionTable[hash & ttMask];
+    // confirm the found entry is an exact match
+    const auto ttHit = entry.hashKey == hash;
+    Move ttMove{};
+    if (ttHit)
+        ttMove = entry.bestMove;
+
+    // only use the tt entry's value if we are not at the root
+    if (ttHit && depthLeft != initialDepth && entry.depth >= depthLeft) {
+        auto ttEvaluation = entry.evaluation;
+        // reverse the checkmate distance adjustment that was applied at store time
+        if (ttEvaluation > mateThreshold)
+            ttEvaluation -= plyFromRoot;
+        else if (ttEvaluation < -mateThreshold)
+            ttEvaluation += plyFromRoot;
+
+        if (entry.flag == TTEntry::Flag::EXACT || (entry.flag == TTEntry::Flag::LOWERBOUND && ttEvaluation >= beta) || (entry.flag == TTEntry::Flag::UPPERBOUND && ttEvaluation <= alpha))
+            return ttEvaluation;
+    }
+
+    // -------------------- Depth = 0, Terminal Checks --------------------
     if (depthLeft == 0)
-        //return evaluateBoardPosition(game.getCurrentGameState());
         return quiescenceSearch(game, alpha, beta, plyFromRoot);
 
     auto moves = game.generateAllLegalMoves(game.getCurrentGameState());
     if (moves.empty()) {
-        if (game.checkIsKingInCheck(game.getCurrentGameState(), game.getCurrentGameState().moveColour))
+        if (game.isKingInCheck(game.getCurrentGameState(), game.getCurrentGameState().moveColour))
             return minusInfinity + plyFromRoot;
         return 0;
     }
 
     orderMoves(game, moves);
 
-    // at the root, promote the best move from the previous iterative-deepening iteration
-    // to the very front of the move list. this is by far the most impactful move-ordering
-    // hint we have at the root and is what makes ID a net speedup rather than just overhead.
-    if (depthLeft == initialDepth) {
-        const auto previousBest = std::ranges::find_if(moves, [this](const Move& move) {
-            return move.startSquare == bestMove.startSquare && move.endSquare == bestMove.endSquare && move.promotionPieceType == bestMove.promotionPieceType;
+    // -------------------- Move Ordering Hook: TT Move First --------------------
+    if (ttHit) {
+        const auto it = std::ranges::find_if(moves, [&ttMove](const Move& move) {
+            return move.startSquare == ttMove.startSquare
+                && move.endSquare   == ttMove.endSquare
+                && move.promotionPieceType == ttMove.promotionPieceType;
         });
-        if (previousBest != moves.end() && previousBest != moves.begin())
-            std::rotate(moves.begin(), previousBest, previousBest + 1);
+        if (it != moves.end() && it != moves.begin())
+            std::rotate(moves.begin(), it, it + 1);
     }
+
+    // -------------------- Main Loop (Negamax + Alpha Beta Pruning) --------------------
+    const auto originalAlpha = alpha;
+    Move localBestMove{};
 
     for (auto& move : moves) {
         if (stopToken.stop_requested())
@@ -228,35 +256,40 @@ int Engine::search(Game& game, int alpha, const int beta, const int depthLeft, c
         const auto moveDelta = game.movePiece(game.getCurrentGameState(), move);
         const int evaluation = -search(game, -beta, -alpha, depthLeft - 1, initialDepth, plyFromRoot + 1, stopToken);
         game.undoLastMove(game.getCurrentGameState(), moveDelta);
-        ++movesSearched;
+        ++positionsEvaluated;
 
         if (evaluation > alpha) {
             alpha = evaluation;
+            localBestMove = move;
             if (depthLeft == initialDepth)
                 bestMove = move;
         }
 
         // the last move was too good, the opponent won't allow this position to be reached (by playing a different move earlier on)
         // skip remaining moves/prune branch
-        if (evaluation >= beta)
+        if (evaluation >= beta) {
+            storeTTEntry(hash, localBestMove, beta, depthLeft, TTEntry::Flag::LOWERBOUND, plyFromRoot);
             return beta;
+        }
     }
+    storeTTEntry(hash, localBestMove, alpha, depthLeft, alpha > originalAlpha ? TTEntry::Flag::EXACT : TTEntry::Flag::UPPERBOUND, plyFromRoot);
     return alpha;
 }
 
 int Engine::quiescenceSearch(Game& game, int alpha, const int beta, const int plyFromRoot) {
+
     const auto legalMoves = game.generateAllLegalMoves(game.getCurrentGameState());
 
     // handle checkmate and stalemate
     if (legalMoves.empty()) {
-        if (game.checkIsKingInCheck(game.getCurrentGameState(), game.getCurrentGameState().moveColour))
+        if (game.isKingInCheck(game.getCurrentGameState(), game.getCurrentGameState().moveColour))
             // checkmate found, use plyFromRoot to prioritise faster mates when winning and slower mates when losing
             return minusInfinity + plyFromRoot;
         // stalemate found
         return 0;
     }
 
-    const auto sideToMoveInCheck = game.checkIsKingInCheck(game.getCurrentGameState(), game.getCurrentGameState().moveColour);
+    const auto sideToMoveInCheck = game.isKingInCheck(game.getCurrentGameState(), game.getCurrentGameState().moveColour);
 
     // static evaluation (stand pat)
     auto evaluation = evaluateBoardPosition(game.getCurrentGameState());
@@ -283,6 +316,16 @@ int Engine::quiescenceSearch(Game& game, int alpha, const int beta, const int pl
     }
 
     return alpha;
+}
+
+void Engine::storeTTEntry(const uint64_t hashKey, const Move& entryBestMove, int evaluation, const int depth, const TTEntry::Flag flag, const int plyFromRoot) {
+    if (evaluation > mateThreshold)
+        evaluation += plyFromRoot;
+    else if (evaluation < -mateThreshold)
+        evaluation -= plyFromRoot;
+
+    transpositionTable[hashKey & ttMask] = TTEntry{hashKey, entryBestMove, evaluation, static_cast<int16_t>(depth), flag};
+    ++transpositions;
 }
 
 std::uint64_t Engine::perft(Game& game, const int depth) const {
