@@ -158,6 +158,10 @@ struct ZobristHashKeys
 };
 
 class Game {
+    // 0 - 3 are the orthogonals, 4 - 7 are the diagonals
+    static constexpr std::array pieceDirections = {Vector2Int(1, 0), Vector2Int(0, 1), Vector2Int(-1, 0), Vector2Int(0, -1), Vector2Int(1, 1), Vector2Int(-1, -1), Vector2Int(1, -1), Vector2Int(-1, 1)};
+    static constexpr std::array knightVectors = {Vector2Int(2, 1), Vector2Int(-2, -1), Vector2Int(2, -1), Vector2Int(-2, 1), Vector2Int(1, 2), Vector2Int(-1, -2), Vector2Int(1, -2), Vector2Int(-1, 2)};
+
     GameState currentGameState;
     std::vector<GameState> currentGameStateHistory;
 
@@ -185,7 +189,6 @@ public:
     GameTypes::MoveType placePieceOnBoard(GameState& gameState, Vector2Int endSquare, std::vector<GameState>& gameStateHistory, const Piece* pawnPromotionChoice) const;
     MoveDelta movePiece(GameState& gameState, const Move& move) const;
     void undoLastMove(GameState& gameState, const MoveDelta& moveDelta) const;
-    void updateCastlingRights(GameState& gameState, const Move &move) const;
     void castleRook(GameState& gameState, GameTypes::CastleType castleType) const;
 
     // -------------------- validation/helper functions (do not modify the game state) --------------------
@@ -198,7 +201,7 @@ public:
     [[nodiscard]] bool isMoveValidForPawn(const GameState& gameState, const Move& move) const;
     [[nodiscard]] bool checkForPawnDoublePush(const GameState& gameState, const Move& move) const;
     [[nodiscard]] bool checkForEnPassantTake(const GameState& gameState, const Move &move) const;
-    [[nodiscard]] bool isSquareUnderAttack(const GameState& gameState, Vector2Int square, Piece::Colour enemyColour) const;
+    [[nodiscard]] bool isSquareUnderAttack(const GameState& gameState, Vector2Int square, Piece::Colour enemyColour, std::optional<Vector2Int> ignoredSquare) const;
     [[nodiscard]] bool isSquareUnderAttackByPawn(const GameState& gameState, Vector2Int square, Piece::Colour enemyColour) const;
     [[nodiscard]] bool isKingInCheck(const GameState& gameState, Piece::Colour kingColour) const;
     [[nodiscard]] bool checkForPawnPromotionOnLastMove(const GameState& gameState) const;
